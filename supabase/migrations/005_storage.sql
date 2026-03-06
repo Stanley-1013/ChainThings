@@ -1,7 +1,7 @@
 -- ChainThings: storage bucket + RLS policies
 
 insert into storage.buckets (id, name, public, file_size_limit)
-values ('chainthings-uploads', 'chainthings-uploads', false, 52428800);
+values ('chainthings-uploads', 'chainthings-uploads', false, 524288000);
 
 -- Users can only access files in their own tenant folder
 create policy "Tenant upload access"
