@@ -1,0 +1,26 @@
+services:
+  chainthings:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chainthings-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - SUPABASE_URL=http://supabase-kong:8000
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - OPENCLAW_GATEWAY_URL=http://openclaw-openclaw-gateway-1:18789
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      - N8N_API_URL=http://n8n-n8n-1:5678
+      - N8N_API_KEY=${N8N_API_KEY}
+    networks:
+      default:
+      lab_net:
+
+networks:
+  lab_net:
+    external: true
