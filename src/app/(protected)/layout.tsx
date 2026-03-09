@@ -45,6 +45,12 @@ export default async function ProtectedLayout({
           >
             Workflows
           </Link>
+          <Link
+            href="/settings"
+            className="block rounded px-3 py-2 text-sm hover:bg-gray-100"
+          >
+            Settings
+          </Link>
         </nav>
         <div className="pt-4 border-t border-gray-200 mt-4">
           <p className="text-xs text-gray-500 truncate">{user.email}</p>
