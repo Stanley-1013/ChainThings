@@ -1,0 +1,196 @@
+{
+  "timestamp": "2026-03-11T12:56:11+00:00",
+  "project": "ChainThings",
+  "description": "Multi-tenant Next.js app with Supabase auth, chat, files, and n8n workflow automation",
+  "root_claude_md": "CLAUDE.md",
+  "modules": [],
+  "single_module_project": true,
+  "functional_domains": [
+    {
+      "name": "auth",
+      "path": "src/app/(auth)/",
+      "entry_files": [
+        "src/app/(auth)/login/page.tsx",
+        "src/app/(auth)/register/page.tsx",
+        "src/app/(auth)/callback/route.ts"
+      ],
+      "api_routes": [
+        "src/app/api/auth/signout/route.ts"
+      ],
+      "tests": [],
+      "config_files": []
+    },
+    {
+      "name": "protected-pages",
+      "path": "src/app/(protected)/",
+      "entry_files": [
+        "src/app/(protected)/layout.tsx",
+        "src/app/(protected)/dashboard/page.tsx",
+        "src/app/(protected)/chat/page.tsx",
+        "src/app/(protected)/chat/[conversationId]/page.tsx",
+        "src/app/(protected)/files/page.tsx",
+        "src/app/(protected)/workflows/page.tsx",
+        "src/app/(protected)/settings/page.tsx"
+      ],
+      "api_routes": [],
+      "tests": [],
+      "config_files": []
+    },
+    {
+      "name": "api",
+      "path": "src/app/api/",
+      "entry_files": [
+        "src/app/api/chat/route.ts",
+        "src/app/api/files/upload/route.ts",
+        "src/app/api/workflows/generate/route.ts",
+        "src/app/api/integrations/route.ts",
+        "src/app/api/integrations/hedy/setup/route.ts",
+        "src/app/api/auth/signout/route.ts"
+      ],
+      "api_routes": [
+        "POST /api/chat",
+        "POST /api/files/upload",
+        "POST /api/workflows/generate",
+        "GET /api/integrations",
+        "POST /api/integrations",
+        "DELETE /api/integrations",
+        "POST /api/integrations/hedy/setup",
+        "POST /api/auth/signout"
+      ],
+      "tests": [],
+      "config_files": []
+    },
+    {
+      "name": "lib-supabase",
+      "path": "src/lib/supabase/",
+      "entry_files": [
+        "src/lib/supabase/client.ts",
+        "src/lib/supabase/server.ts",
+        "src/lib/supabase/admin.ts"
+      ],
+      "api_routes": [],
+      "tests": [],
+      "config_files": []
+    },
+    {
+      "name": "lib-openclaw",
+      "path": "src/lib/openclaw/",
+      "entry_files": [
+        "src/lib/openclaw/client.ts"
+      ],
+      "api_routes": [],
+      "tests": [],
+      "config_files": []
+    },
+    {
+      "name": "lib-n8n",
+      "path": "src/lib/n8n/",
+      "entry_files": [
+        "src/lib/n8n/client.ts",
+        "src/lib/n8n/templates/hedy-webhook.ts"
+      ],
+      "api_routes": [],
+      "tests": [],
+      "config_files": []
+    },
+    {
+      "name": "database-migrations",
+      "path": "supabase/migrations/",
+      "entry_files": [
+        "supabase/migrations/001_profiles.sql",
+        "supabase/migrations/002_conversations.sql",
+        "supabase/migrations/003_files.sql",
+        "supabase/migrations/004_workflows.sql",
+        "supabase/migrations/005_storage.sql",
+        "supabase/migrations/006_integrations.sql",
+        "supabase/migrations/007_items.sql"
+      ],
+      "api_routes": [],
+      "tests": [],
+      "config_files": []
+    }
+  ],
+  "important_files": [
+    "src/middleware.ts",
+    "src/app/layout.tsx",
+    "src/app/page.tsx",
+    "next.config.ts",
+    "Dockerfile",
+    "docker-compose.yml",
+    "package.json",
+    "tsconfig.json",
+    ".env.example"
+  ],
+  "data_models": {
+    "chainthings_profiles": {
+      "migration": "supabase/migrations/001_profiles.sql",
+      "key_columns": ["id (uuid, PK, FK auth.users)", "tenant_id (uuid, unique)", "username (text, unique)"],
+      "rls": true,
+      "trigger": "chainthings_handle_new_user (auto-create on signup)"
+    },
+    "chainthings_conversations": {
+      "migration": "supabase/migrations/002_conversations.sql",
+      "key_columns": ["id (uuid, PK)", "tenant_id (uuid, FK)", "title (text)", "model (text)"],
+      "rls": true
+    },
+    "chainthings_messages": {
+      "migration": "supabase/migrations/002_conversations.sql",
+      "key_columns": ["id (uuid, PK)", "conversation_id (uuid, FK)", "tenant_id (uuid, FK)", "role (text)", "content (text)", "metadata (jsonb)"],
+      "rls": true
+    },
+    "chainthings_files": {
+      "migration": "supabase/migrations/003_files.sql",
+      "key_columns": ["id (uuid, PK)", "tenant_id (uuid, FK)", "filename (text)", "storage_path (text)", "size_bytes (bigint)"],
+      "rls": true
+    },
+    "chainthings_workflows": {
+      "migration": "supabase/migrations/004_workflows.sql",
+      "key_columns": ["id (uuid, PK)", "tenant_id (uuid, FK)", "n8n_workflow_id (text)", "status (text)", "n8n_data (jsonb)"],
+      "rls": true
+    },
+    "chainthings_integrations": {
+      "migration": "supabase/migrations/006_integrations.sql",
+      "key_columns": ["id (uuid, PK)", "tenant_id (uuid, FK)", "service (text)", "config (jsonb)", "enabled (boolean)"],
+      "rls": true,
+      "unique_constraint": "(tenant_id, service)"
+    },
+    "chainthings_items": {
+      "migration": "supabase/migrations/007_items.sql",
+      "key_columns": ["id (uuid, PK)", "tenant_id (uuid, FK)", "integration_id (uuid, FK)", "type (text)", "title (text)", "content (text)", "metadata (jsonb)"],
+      "rls": true
+    },
+    "storage_bucket": {
+      "migration": "supabase/migrations/005_storage.sql",
+      "name": "chainthings-uploads",
+      "file_size_limit": "500MB",
+      "rls": true
+    }
+  },
+  "coverage": {
+    "total_source_files": 27,
+    "scanned_files": 27,
+    "coverage_percent": 100,
+    "by_domain": {
+      "auth": { "scanned": 3, "total": 3, "gaps": [] },
+      "protected-pages": { "scanned": 7, "total": 7, "gaps": [] },
+      "api": { "scanned": 6, "total": 6, "gaps": [] },
+      "lib-supabase": { "scanned": 3, "total": 3, "gaps": [] },
+      "lib-openclaw": { "scanned": 1, "total": 1, "gaps": [] },
+      "lib-n8n": { "scanned": 2, "total": 2, "gaps": [] },
+      "database-migrations": { "scanned": 7, "total": 7, "gaps": [] },
+      "config-and-infra": { "scanned": 8, "total": 8, "gaps": [] }
+    }
+  },
+  "gaps": [
+    "No test files exist (unit, integration, or e2e)",
+    "No CI/CD configuration found",
+    "No OpenAPI / API documentation",
+    "Cookie name 'sb-localhost-auth-token' is hardcoded for local development"
+  ],
+  "ignored": {
+    "directories": ["node_modules", ".next", "build", "out", ".vercel"],
+    "reason": ".gitignore rules"
+  },
+  "truncated": false,
+  "next_steps": []
+}

@@ -95,6 +95,16 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const { data: profile } = await supabase
+    .from("chainthings_profiles")
+    .select("tenant_id")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile) {
+    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+  }
+
   const { id } = await request.json();
 
   if (!id) {
@@ -104,7 +114,8 @@ export async function DELETE(request: Request) {
   const { error } = await supabase
     .from("chainthings_integrations")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .eq("tenant_id", profile.tenant_id);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

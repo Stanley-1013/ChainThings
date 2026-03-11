@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { SUPABASE_COOKIE_NAME } from "@/lib/supabase/constants";
 
 const publicPaths = ["/login", "/register", "/callback"];
 
@@ -11,7 +12,7 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookieOptions: {
-        name: "sb-localhost-auth-token",
+        name: SUPABASE_COOKIE_NAME,
       },
       cookies: {
         getAll() {

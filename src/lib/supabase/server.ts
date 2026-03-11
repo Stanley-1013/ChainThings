@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { SUPABASE_COOKIE_NAME } from "./constants";
 
 export async function createClient() {
   const cookieStore = await cookies();
@@ -9,7 +10,7 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookieOptions: {
-        name: "sb-localhost-auth-token",
+        name: SUPABASE_COOKIE_NAME,
       },
       cookies: {
         getAll() {

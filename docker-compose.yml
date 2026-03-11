@@ -21,6 +21,7 @@ services:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
       - N8N_API_URL=http://n8n-n8n-1:5678
       - N8N_API_KEY=${N8N_API_KEY}
+      - SUPABASE_COOKIE_NAME=${SUPABASE_COOKIE_NAME:-sb-localhost-auth-token}
     networks:
       default:
       lab_net:

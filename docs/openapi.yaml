@@ -1,0 +1,562 @@
+openapi: "3.0.3"
+info:
+  title: ChainThings API
+  version: "0.1.0"
+  description: |
+    Multi-tenant application API for chat, file management, workflow automation, and integrations.
+    All endpoints require Supabase session authentication via cookie.
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+  - url: http://localhost:3001
+    description: Docker development
+
+security:
+  - cookieAuth: []
+
+tags:
+  - name: Auth
+    description: Authentication endpoints
+  - name: Chat
+    description: AI chat with optional n8n workflow generation
+  - name: Files
+    description: File upload and management
+  - name: Integrations
+    description: Third-party integration management
+  - name: Workflows
+    description: AI-powered n8n workflow generation
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sb-localhost-auth-token
+      description: Supabase session cookie (name configurable via SUPABASE_COOKIE_NAME env var)
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: User message content
+        conversationId:
+          type: string
+          format: uuid
+          description: Existing conversation ID. If omitted, a new conversation is created.
+        tool:
+          type: string
+          enum: [n8n]
+          description: Optional tool mode. "n8n" enables workflow generation via chat.
+
+    N8nResult:
+      type: object
+      properties:
+        name:
+          type: string
+        n8nWorkflowId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, pending]
+
+    ChatResponse:
+      type: object
+      required: [conversationId, message]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        message:
+          type: string
+          description: Assistant response content
+        n8n:
+          $ref: "#/components/schemas/N8nResult"
+          nullable: true
+
+    FileMetadata:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        storage_path:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    FileUploadResponse:
+      type: object
+      required: [file]
+      properties:
+        file:
+          $ref: "#/components/schemas/FileMetadata"
+
+    Integration:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        service:
+          type: string
+          example: hedy.ai
+        label:
+          type: string
+        config:
+          type: object
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    IntegrationListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Integration"
+
+    IntegrationCreateRequest:
+      type: object
+      required: [service]
+      properties:
+        service:
+          type: string
+          example: hedy.ai
+        label:
+          type: string
+        config:
+          type: object
+
+    IntegrationDeleteRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+
+    IntegrationCreateResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Integration"
+
+    HedySetupResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [webhookUrl, n8nWorkflowId]
+          properties:
+            webhookUrl:
+              type: string
+              format: uri
+              example: http://localhost:5678/webhook/hedy-tenant-uuid
+            n8nWorkflowId:
+              type: string
+            active:
+              type: boolean
+            alreadyExists:
+              type: boolean
+
+    WorkflowGenerateRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          description: Natural language description of the desired workflow
+
+    WorkflowRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        prompt:
+          type: string
+        status:
+          type: string
+          enum: [generating, active, pending, error]
+        n8n_workflow_id:
+          type: string
+          nullable: true
+        n8n_data:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    WorkflowGenerateResponse:
+      type: object
+      required: [workflow]
+      properties:
+        workflow:
+          $ref: "#/components/schemas/WorkflowRecord"
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+paths:
+  /api/auth/signout:
+    post:
+      tags: [Auth]
+      summary: Sign out current user
+      description: |
+        Signs out the current session and redirects to the login page.
+        This endpoint does not verify authentication — any request will trigger sign-out.
+      security: []
+      responses:
+        "302":
+          description: Redirect to /login
+          headers:
+            Location:
+              schema:
+                type: string
+                example: /login
+
+  /api/chat:
+    post:
+      tags: [Chat]
+      summary: Send a chat message
+      description: |
+        Send a message to the AI assistant. Optionally specify a conversation ID
+        to continue an existing conversation, or omit it to start a new one.
+        Set `tool: "n8n"` to enable workflow generation mode.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Assistant response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "400":
+          description: Missing or invalid message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: AI service error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/files/upload:
+    post:
+      tags: [Files]
+      summary: Upload a file
+      description: Upload a file to tenant-isolated Supabase Storage and save metadata.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileUploadResponse"
+        "400":
+          description: No file provided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Upload or metadata error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/integrations:
+    get:
+      tags: [Integrations]
+      summary: List integrations
+      description: Retrieve all integrations for the current tenant.
+      responses:
+        "200":
+          description: Integration list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationListResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Database error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    post:
+      tags: [Integrations]
+      summary: Create or update an integration
+      description: |
+        Upsert an integration by service name. If an integration with the same
+        (tenant_id, service) exists, it will be updated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationCreateRequest"
+      responses:
+        "200":
+          description: Integration created/updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationCreateResponse"
+        "400":
+          description: Missing service field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Database error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      tags: [Integrations]
+      summary: Delete an integration
+      description: |
+        Delete an integration by ID. The deletion is scoped to the current
+        tenant — only integrations belonging to the authenticated user's tenant can be deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationDeleteRequest"
+      responses:
+        "200":
+          description: Integration deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Missing id field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Database error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/integrations/hedy/setup:
+    post:
+      tags: [Integrations]
+      summary: Set up Hedy.ai webhook
+      description: |
+        Generates an n8n workflow with a webhook trigger for receiving Hedy.ai
+        meeting data. The workflow transforms and stores meeting notes, summaries,
+        and action items. Returns immediately if a workflow already exists.
+      responses:
+        "200":
+          description: Webhook setup complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HedySetupResponse"
+        "400":
+          description: Hedy integration not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: n8n API error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/workflows/generate:
+    post:
+      tags: [Workflows]
+      summary: Generate an n8n workflow from natural language
+      description: |
+        Uses AI to generate an n8n workflow JSON from a natural language prompt.
+        The workflow is saved to the database and optionally created in n8n.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowGenerateRequest"
+      responses:
+        "200":
+          description: Workflow generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowGenerateResponse"
+        "400":
+          description: Missing prompt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: AI or workflow creation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"

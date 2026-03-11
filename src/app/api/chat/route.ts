@@ -99,7 +99,7 @@ export async function POST(request: Request) {
   try {
     // Call OpenClaw
     const response = await chatCompletion(chatMessages, user.id);
-    let assistantContent =
+    const assistantContent =
       response.choices[0]?.message?.content || "No response";
 
     // Check if response contains an n8n workflow JSON block
