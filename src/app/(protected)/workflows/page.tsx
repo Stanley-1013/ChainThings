@@ -2,6 +2,24 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { useEffect, useState, useCallback } from "react";
+import { PageHeader } from "@/components/shared/page-header";
+import { EmptyState } from "@/components/shared/empty-state";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { 
+  Zap, 
+  Plus, 
+  Loader2, 
+  ExternalLink, 
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  Play
+} from "lucide-react";
+import { toast } from "sonner";
+// cn utility available if needed
 
 interface Workflow {
   id: string;
@@ -16,7 +34,6 @@ export default function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const supabase = createClient();
 
   const loadWorkflows = useCallback(async () => {
@@ -25,7 +42,7 @@ export default function WorkflowsPage() {
       .select("id, name, description, status, n8n_workflow_id, created_at")
       .order("created_at", { ascending: false });
 
-    if (data) setWorkflows(data);
+    if (data) setWorkflows(data as Workflow[]);
   }, []);
 
   useEffect(() => {
@@ -37,7 +54,7 @@ export default function WorkflowsPage() {
     if (!prompt.trim() || generating) return;
 
     setGenerating(true);
-    setError(null);
+    const toastId = toast.loading("Generating your workflow...");
 
     try {
       const res = await fetch("/api/workflows/generate", {
@@ -46,90 +63,122 @@ export default function WorkflowsPage() {
         body: JSON.stringify({ prompt: prompt.trim() }),
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error || "Generation failed");
       }
 
+      toast.success("Workflow generated and pushed to n8n", { id: toastId });
       setPrompt("");
       await loadWorkflows();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Generation failed");
+      toast.error(err instanceof Error ? err.message : "Generation failed", { id: toastId });
     } finally {
       setGenerating(false);
     }
   }
 
-  const statusColor: Record<string, string> = {
-    active: "text-green-600",
-    pending: "text-yellow-600",
-    generating: "text-blue-600",
-    error: "text-red-600",
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "active":
+        return <Badge className="bg-green-500 hover:bg-green-600"><CheckCircle2 className="mr-1 h-3 w-3" /> Active</Badge>;
+      case "pending":
+        return <Badge variant="secondary"><Clock className="mr-1 h-3 w-3" /> Pending</Badge>;
+      case "generating":
+        return <Badge variant="outline" className="animate-pulse border-blue-500 text-blue-500"><Loader2 className="mr-1 h-3 w-3 animate-spin" /> Generating</Badge>;
+      case "error":
+        return <Badge variant="destructive"><AlertCircle className="mr-1 h-3 w-3" /> Error</Badge>;
+      default:
+        return <Badge variant="outline">{status}</Badge>;
+    }
   };
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Workflows</h1>
+    <div className="space-y-8">
+      <PageHeader title="Workflows" description="Automate your tasks with AI-generated n8n workflows" />
 
-      <form onSubmit={handleGenerate} className="space-y-2">
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="Describe the workflow you want to create... e.g., 'A webhook that receives a JSON payload and sends an email notification'"
-          rows={3}
-          disabled={generating}
-          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={generating || !prompt.trim()}
-          className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {generating ? "Generating..." : "Generate workflow"}
-        </button>
-      </form>
-
-      {error && <p className="text-sm text-red-600">{error}</p>}
-
-      {workflows.length > 0 ? (
-        <div className="space-y-2">
-          {workflows.map((wf) => (
-            <div
-              key={wf.id}
-              className="rounded border border-gray-200 p-4"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="font-medium">{wf.name}</h3>
-                <span className={`text-xs font-medium ${statusColor[wf.status] || "text-gray-500"}`}>
-                  {wf.status}
-                </span>
-              </div>
-              {wf.description && (
-                <p className="text-sm text-gray-500 mt-1">{wf.description}</p>
-              )}
-              <div className="flex items-center gap-4 mt-2">
-                <span className="text-xs text-gray-400">
-                  {new Date(wf.created_at).toLocaleDateString()}
-                </span>
-                {wf.n8n_workflow_id && (
-                  <a
-                    href={`http://localhost:5678/workflow/${wf.n8n_workflow_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-600 hover:underline"
-                  >
-                    Open in n8n
-                  </a>
-                )}
-              </div>
+      <Card className="bg-muted/30 border-dashed">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Zap className="h-5 w-5 text-primary fill-primary" />
+            Create New Workflow
+          </CardTitle>
+          <CardDescription>
+            Describe the automation you need, and our AI will build the n8n nodes for you.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleGenerate} className="space-y-4">
+            <Textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="e.g., 'A webhook that receives a JSON payload from a form and sends an email notification with the details'"
+              className="min-h-[100px] bg-background"
+              disabled={generating}
+            />
+            <div className="flex justify-end">
+              <Button type="submit" disabled={generating || !prompt.trim()}>
+                {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                {generating ? "Generating..." : "Generate Workflow"}
+              </Button>
             </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-gray-500">
-          No workflows yet. Describe one above and let AI generate it!
-        </p>
-      )}
+          </form>
+        </CardContent>
+      </Card>
+
+      <div className="space-y-4">
+        <h2 className="text-xl font-semibold tracking-tight">Your Workflows</h2>
+        
+        {workflows.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {workflows.map((wf) => (
+              <Card key={wf.id} className="group hover:border-primary/50 transition-colors">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <CardTitle className="text-base group-hover:text-primary transition-colors">{wf.name}</CardTitle>
+                      {wf.description && (
+                        <CardDescription className="line-clamp-2 text-xs">
+                          {wf.description}
+                        </CardDescription>
+                      )}
+                    </div>
+                    {getStatusBadge(wf.status)}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mt-2">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Clock className="h-3.5 w-3.5" />
+                      {new Date(wf.created_at).toLocaleDateString()}
+                    </div>
+                    {wf.n8n_workflow_id && (
+                      <Button variant="outline" size="sm" asChild className="h-8">
+                        <a
+                          href={`http://localhost:5678/workflow/${wf.n8n_workflow_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <Play className="mr-1.5 h-3 w-3 fill-current" />
+                          Open in n8n
+                          <ExternalLink className="ml-1.5 h-3 w-3 opacity-50" />
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <EmptyState 
+            icon={Zap}
+            title="No workflows yet"
+            description="You haven't created any automations. Use the generator above to build your first n8n workflow."
+          />
+        )}
+      </div>
     </div>
   );
 }
