@@ -100,6 +100,41 @@ describe("POST /api/integrations/hedy/setup", () => {
     expect(body.data.webhookUrl).toContain("hedy-tenant-456");
   });
 
+  it("should prefer N8N_WEBHOOK_URL over N8N_API_URL for webhook URL", async () => {
+    process.env.N8N_WEBHOOK_URL = "https://public.example.com";
+    process.env.N8N_API_URL = "http://internal:5678";
+    setupClient({ id: "int-1", config: { n8n_workflow_id: "wf-1" } });
+
+    const response = await POST();
+    const body = await getJsonResponse(response);
+
+    expect(body.data.webhookUrl).toContain("https://public.example.com/webhook/");
+    process.env.N8N_WEBHOOK_URL = "";
+  });
+
+  it("should fall back to N8N_API_URL when N8N_WEBHOOK_URL is not set", async () => {
+    process.env.N8N_WEBHOOK_URL = "";
+    process.env.N8N_API_URL = "http://n8n-internal:5678";
+    setupClient({ id: "int-1", config: { n8n_workflow_id: "wf-1" } });
+
+    const response = await POST();
+    const body = await getJsonResponse(response);
+
+    expect(body.data.webhookUrl).toContain("http://n8n-internal:5678/webhook/");
+  });
+
+  it("should strip trailing slashes from webhook URL", async () => {
+    process.env.N8N_WEBHOOK_URL = "https://public.example.com/";
+    setupClient({ id: "int-1", config: { n8n_workflow_id: "wf-1" } });
+
+    const response = await POST();
+    const body = await getJsonResponse(response);
+
+    expect(body.data.webhookUrl).not.toContain("//webhook");
+    expect(body.data.webhookUrl).toContain("https://public.example.com/webhook/");
+    process.env.N8N_WEBHOOK_URL = "";
+  });
+
   it("should create and activate workflow successfully", async () => {
     setupClient({ id: "int-1", config: {} });
     mockCreateWorkflow.mockResolvedValue(mockN8nWorkflow("wf-new", "Hedy Webhook"));

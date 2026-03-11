@@ -3,6 +3,14 @@ import { createWorkflow, activateWorkflow } from "@/lib/n8n/client";
 import { generateHedyWebhookWorkflow } from "@/lib/n8n/templates/hedy-webhook";
 import { NextResponse } from "next/server";
 
+function getWebhookBaseUrl(): string {
+  const url =
+    process.env.N8N_WEBHOOK_URL ||
+    process.env.N8N_API_URL ||
+    "http://localhost:5678";
+  return url.replace(/\/+$/, "");
+}
+
 export async function POST() {
   const supabase = await createClient();
   const {
@@ -40,7 +48,7 @@ export async function POST() {
 
   // Check if workflow already exists
   if (integration.config?.n8n_workflow_id) {
-    const n8nUrl = process.env.N8N_API_URL || "http://localhost:5678";
+    const n8nUrl = getWebhookBaseUrl();
     return NextResponse.json({
       data: {
         webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
@@ -87,7 +95,7 @@ export async function POST() {
       })
       .eq("id", integration.id);
 
-    const n8nUrl = process.env.N8N_API_URL || "http://localhost:5678";
+    const n8nUrl = getWebhookBaseUrl();
 
     return NextResponse.json({
       data: {
