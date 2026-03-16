@@ -19,9 +19,17 @@ tags:
   - name: Auth
     description: Authentication endpoints
   - name: Chat
-    description: AI chat with optional n8n workflow generation
+    description: AI chat with RAG-enhanced responses and optional n8n workflow generation
   - name: Files
     description: File upload and management
+  - name: Items
+    description: Meeting notes and business data management
+  - name: Memory
+    description: Per-tenant assistant memory management
+  - name: Notifications
+    description: AI-generated notification digests and settings
+  - name: RAG
+    description: Retrieval-Augmented Generation embedding pipeline
   - name: Integrations
     description: Third-party integration management
   - name: Workflows
@@ -84,6 +92,22 @@ components:
         n8n:
           $ref: "#/components/schemas/N8nResult"
           nullable: true
+        sources:
+          type: array
+          nullable: true
+          description: RAG source documents referenced in the response
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              title:
+                type: string
+                nullable: true
+              type:
+                type: string
+                enum: [item, conversation, memory]
 
     FileMetadata:
       type: object
@@ -244,6 +268,145 @@ components:
         success:
           type: boolean
           example: true
+
+    Item:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        title:
+          type: string
+          nullable: true
+        content:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ItemCreateRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          example: meeting_note
+        title:
+          type: string
+        content:
+          type: string
+        metadata:
+          type: object
+
+    MemoryEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        category:
+          type: string
+          enum: [task, preference, fact, project, summary]
+        content:
+          type: string
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 10
+        status:
+          type: string
+          enum: [active, archived, expired]
+        source_type:
+          type: string
+          nullable: true
+        source_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    MemoryCreateRequest:
+      type: object
+      required: [category, content]
+      properties:
+        category:
+          type: string
+          enum: [task, preference, fact, project, summary]
+        content:
+          type: string
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 10
+
+    NotificationSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        frequency:
+          type: string
+          enum: [daily, biweekly, weekly]
+        timezone:
+          type: string
+          example: Asia/Taipei
+        send_hour_local:
+          type: integer
+          minimum: 0
+          maximum: 23
+
+    NotificationCache:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        period_start:
+          type: string
+          format: date
+        period_end:
+          type: string
+          format: date
+        content:
+          type: object
+          properties:
+            summary:
+              type: string
+            actionItems:
+              type: array
+              items:
+                type: object
+                properties:
+                  task:
+                    type: string
+                  priority:
+                    type: string
+            reminders:
+              type: array
+              items:
+                type: string
+        status:
+          type: string
+          enum: [generating, generated, shown, expired]
+        created_at:
+          type: string
+          format: date-time
 
 paths:
   /api/auth/signout:
@@ -560,3 +723,334 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /api/items:
+    get:
+      tags: [Items]
+      summary: List items
+      description: Retrieve paginated items for the current tenant, optionally filtered by type.
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: Filter by item type (e.g. "meeting_note")
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: sort
+          in: query
+          schema:
+            type: string
+            default: created_at
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: Paginated item list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Item"
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+        "401":
+          description: Not authenticated
+        "404":
+          description: Profile not found
+
+    post:
+      tags: [Items]
+      summary: Create an item
+      description: Create a new item (e.g. meeting note). Automatically queues for RAG embedding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ItemCreateRequest"
+      responses:
+        "201":
+          description: Item created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Item"
+        "400":
+          description: Missing type field
+        "401":
+          description: Not authenticated
+
+  /api/items/extract:
+    post:
+      tags: [Items]
+      summary: Extract key points and action items using AI
+      description: |
+        Uses AI to analyze item content and extract structured metadata
+        (title, keyPoints, actionItems, summary). Creates memory entries
+        from action items. Idempotent — re-extraction replaces old tasks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemId]
+              properties:
+                itemId:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Extraction complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      extracted:
+                        type: object
+        "401":
+          description: Not authenticated
+        "404":
+          description: Item not found
+        "502":
+          description: AI service error
+
+  /api/memory:
+    get:
+      tags: [Memory]
+      summary: List memory entries
+      description: Retrieve active memory entries for the current tenant.
+      parameters:
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [task, preference, fact, project, summary]
+        - name: status
+          in: query
+          schema:
+            type: string
+            default: active
+      responses:
+        "200":
+          description: Memory entry list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MemoryEntry"
+        "401":
+          description: Not authenticated
+
+    post:
+      tags: [Memory]
+      summary: Create a memory entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryCreateRequest"
+      responses:
+        "201":
+          description: Memory entry created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/MemoryEntry"
+        "400":
+          description: Missing or invalid fields
+        "401":
+          description: Not authenticated
+
+    delete:
+      tags: [Memory]
+      summary: Archive a memory entry or clear all
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                clearAll:
+                  type: boolean
+      responses:
+        "200":
+          description: Memory archived
+        "400":
+          description: Missing id or clearAll
+        "401":
+          description: Not authenticated
+
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: Get recent notifications
+      description: Retrieve the latest cached notification digests.
+      responses:
+        "200":
+          description: Notification list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/NotificationCache"
+        "401":
+          description: Not authenticated
+
+    patch:
+      tags: [Notifications]
+      summary: Mark notification as shown
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Marked as shown
+        "401":
+          description: Not authenticated
+
+  /api/notifications/settings:
+    get:
+      tags: [Notifications]
+      summary: Get notification settings
+      description: Returns user's notification preferences or defaults if none set.
+      responses:
+        "200":
+          description: Notification settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/NotificationSettings"
+        "401":
+          description: Not authenticated
+
+    put:
+      tags: [Notifications]
+      summary: Update notification settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationSettings"
+      responses:
+        "200":
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/NotificationSettings"
+        "400":
+          description: Invalid frequency or timezone
+        "401":
+          description: Not authenticated
+
+  /api/notifications/generate:
+    post:
+      tags: [Notifications]
+      summary: Generate notification digests
+      description: |
+        Generates AI-powered notification digests. Supports two modes:
+        - **Cron mode**: Authorization header with CRON_SECRET, generates for all eligible users
+        - **User mode**: Standard auth, generates for the requesting user
+      responses:
+        "200":
+          description: Generation complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      generated:
+                        type: integer
+        "401":
+          description: Not authenticated (user mode)
+
+  /api/rag/embed:
+    post:
+      tags: [RAG]
+      summary: Process embedding queue
+      description: |
+        Processes pending RAG documents for the current tenant.
+        Chunks content, generates embeddings, and stores in vector database.
+      responses:
+        "200":
+          description: Processing complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      processed:
+                        type: integer
+                      failed:
+                        type: integer
+        "401":
+          description: Not authenticated
