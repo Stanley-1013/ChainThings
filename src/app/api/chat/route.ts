@@ -6,6 +6,55 @@ import { createWorkflow } from "@/lib/n8n/client";
 import { validateWorkflowNodes } from "@/lib/n8n/validation";
 import { NextResponse } from "next/server";
 
+// Token budget constants
+const MAX_HISTORY_FETCH = 20;
+const HISTORY_TOKEN_BUDGET = 1200;
+const RAG_TOKEN_BUDGET = 900;
+const MEMORY_TOKEN_BUDGET = 250;
+const MAX_RAG_RESULTS = 3;
+const MAX_MEMORIES = 4;
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function truncateToTokens(text: string, maxTokens: number): string {
+  const maxChars = maxTokens * 4;
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars).trimEnd()}...`;
+}
+
+function shouldRunRag(msg: string): boolean {
+  const t = msg.trim().toLowerCase();
+  if (!t) return false;
+  // Skip obvious greetings/acknowledgements (English only — CJK messages always pass)
+  if (t.length < 12 && /^(hi|hello|hey|thanks|thank you|ok|okay|yo)\b/.test(t)) return false;
+  // Skip very short English-only messages without question marks or numbers
+  const hasNonLatin = /[^\x00-\x7F]/.test(t);
+  if (!hasNonLatin && t.split(/\s+/).length <= 3 && !/[0-9?]/.test(t)) return false;
+  return true;
+}
+
+function detectSearchMode(msg: string): "hybrid" | "semantic" | "fulltext" {
+  const t = msg.trim().toLowerCase();
+  if (/["']|error|id:|exact|where|when|who/.test(t)) return "fulltext";
+  if (t.split(/\s+/).length >= 8) return "semantic";
+  return "hybrid";
+}
+
+function selectHistoryWithinBudget(
+  messages: Array<{ role: "user" | "assistant" | "system"; content: string }>
+) {
+  let used = 0;
+  const selected: typeof messages = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const cost = estimateTokens(messages[i].content) + 6;
+    if (selected.length > 0 && used + cost > HISTORY_TOKEN_BUDGET) break;
+    selected.unshift(messages[i]);
+    used += cost;
+  }
+  return selected;
+}
+
 const N8N_SYSTEM_PROMPT = `You are an n8n workflow assistant. Help the user build n8n workflows through conversation.
 
 When you're ready to generate a workflow, output a JSON code block with this format:
@@ -102,13 +151,15 @@ export async function POST(request: Request) {
     .from("chainthings_messages")
     .select("role, content")
     .eq("conversation_id", convId)
-    .order("created_at", { ascending: true })
-    .limit(50);
+    .order("created_at", { ascending: false })
+    .limit(MAX_HISTORY_FETCH);
 
-  const chatMessages = (history || []).map((m) => ({
-    role: m.role as "user" | "assistant" | "system",
-    content: m.content,
-  }));
+  const chatMessages = selectHistoryWithinBudget(
+    (history || []).reverse().map((m) => ({
+      role: m.role as "user" | "assistant" | "system",
+      content: m.content,
+    }))
+  );
 
   // Prepend tenant-specific system prompt if configured
   const tenantSystemPrompt = aiConfig?.system_prompt as
@@ -123,10 +174,11 @@ export async function POST(request: Request) {
     chatMessages.unshift({ role: "system", content: N8N_SYSTEM_PROMPT });
   }
 
-  // RAG: retrieve relevant context for non-tool messages
+  // RAG: retrieve relevant context for non-tool messages (skip trivial turns)
   let ragSources: Array<{ id: string; title: string | null; type: string }> = [];
-  if (tool !== "n8n") {
+  if (tool !== "n8n" && shouldRunRag(message)) {
     try {
+      const searchMode = detectSearchMode(message);
       const queryEmbedding = await generateEmbedding(message, {
         provider: aiOptions.provider,
         token: aiOptions.token,
@@ -134,7 +186,8 @@ export async function POST(request: Request) {
       });
 
       const results = await hybridSearch(queryEmbedding, message, {
-        limit: 5,
+        limit: MAX_RAG_RESULTS,
+        mode: searchMode,
       });
 
       if (results.length > 0) {
@@ -145,33 +198,48 @@ export async function POST(request: Request) {
         }));
 
         const contextParts: string[] = ["[Relevant Context]"];
+        let ragBudgetUsed = estimateTokens(contextParts[0]);
+
         for (const result of results) {
           const label = result.sourceType === "item" ? "Meeting Note" :
             result.sourceType === "memory" ? "Memory" : "Conversation";
-          contextParts.push(`[${label}: ${result.title || "Untitled"}]\n${result.content}`);
+          const chunk = `[${label}: ${result.title || "Untitled"}]\n${truncateToTokens(result.content, 220)}`;
+          const chunkCost = estimateTokens(chunk);
+          if (ragBudgetUsed + chunkCost > RAG_TOKEN_BUDGET) break;
+          contextParts.push(chunk);
+          ragBudgetUsed += chunkCost;
         }
 
-        // Fetch active memory entries (uses authenticated client with RLS)
-        const { data: memories } = await supabase
-          .from("chainthings_memory_entries")
-          .select("category, content")
-          .eq("tenant_id", profile.tenant_id)
-          .eq("status", "active")
-          .order("importance", { ascending: false })
-          .limit(10);
+        // Only fetch memories if we have RAG budget remaining
+        if (ragBudgetUsed < RAG_TOKEN_BUDGET - 100) {
+          const { data: memories } = await supabase
+            .from("chainthings_memory_entries")
+            .select("category, content")
+            .eq("tenant_id", profile.tenant_id)
+            .eq("status", "active")
+            .order("importance", { ascending: false })
+            .limit(MAX_MEMORIES);
 
-        if (memories?.length) {
-          contextParts.push("\n[Assistant Memory]");
-          for (const m of memories) {
-            contextParts.push(`- [${m.category}] ${m.content}`);
+          if (memories?.length) {
+            contextParts.push("\n[Assistant Memory]");
+            let memBudget = 0;
+            for (const m of memories) {
+              const line = `- [${m.category}] ${truncateToTokens(m.content, 60)}`;
+              const lineCost = estimateTokens(line);
+              if (memBudget + lineCost > MEMORY_TOKEN_BUDGET) break;
+              contextParts.push(line);
+              memBudget += lineCost;
+            }
           }
         }
 
-        chatMessages.unshift({
-          role: "system",
-          content: contextParts.join("\n") +
-            "\n\nUse the above context to answer the user's question. Cite sources when referencing specific meeting notes or tasks.",
-        });
+        if (contextParts.length > 1) {
+          chatMessages.unshift({
+            role: "system",
+            content: contextParts.join("\n") +
+              "\n\nUse the above context to answer the user's question. Cite sources when referencing specific meeting notes or tasks.",
+          });
+        }
       }
     } catch {
       // RAG failure is non-fatal; continue without context

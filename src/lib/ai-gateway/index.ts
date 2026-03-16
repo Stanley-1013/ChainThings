@@ -12,5 +12,6 @@ export {
 } from "./providers";
 export {
   generateEmbedding,
+  generateEmbeddings,
   type EmbeddingOptions,
 } from "./embeddings";

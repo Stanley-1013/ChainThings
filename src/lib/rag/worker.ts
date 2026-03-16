@@ -1,8 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { generateEmbedding } from "@/lib/ai-gateway/embeddings";
+import { generateEmbeddings } from "@/lib/ai-gateway/embeddings";
 import { chunkContent } from "./chunker";
 
 const BATCH_SIZE = 10;
+const EMBEDDING_BATCH_SIZE = 32;
 
 export async function processEmbeddingQueue(tenantId?: string): Promise<{
   processed: number;
@@ -61,18 +62,25 @@ export async function processEmbeddingQueue(tenantId?: string): Promise<{
         .delete()
         .eq("document_id", doc.id);
 
-      // Embed and insert each chunk
-      for (const chunk of chunks) {
-        const embedding = await generateEmbedding(chunk.content);
-        await supabase.from("chainthings_rag_chunks").insert({
+      // Embed chunks in batches to reduce HTTP overhead
+      for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
+        const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
+        const embeddings = await generateEmbeddings(
+          batch.map((c) => c.content),
+          { tenantId: doc.tenant_id }
+        );
+
+        const rows = batch.map((chunk, idx) => ({
           tenant_id: doc.tenant_id,
           document_id: doc.id,
           chunk_index: chunk.index,
           content: chunk.content,
-          embedding: JSON.stringify(embedding),
+          embedding: `[${(embeddings[idx] ?? []).join(",")}]`,
           token_count: chunk.tokenCount,
           metadata: chunk.metadata,
-        });
+        }));
+
+        await supabase.from("chainthings_rag_chunks").insert(rows);
       }
 
       // Mark as completed

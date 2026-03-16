@@ -17,15 +17,20 @@ export async function hybridSearch(
   options?: {
     sourceTypes?: string[];
     limit?: number;
+    mode?: "hybrid" | "semantic" | "fulltext";
   }
 ): Promise<SearchResult[]> {
   const supabase = await createClient();
+  const mode = options?.mode ?? "hybrid";
   const { data, error } = await supabase.rpc("chainthings_rag_hybrid_search", {
-    query_embedding: `[${queryEmbedding.join(",")}]`,
+    query_embedding: queryEmbedding.length ? `[${queryEmbedding.join(",")}]` : null,
     query_text: queryText,
     p_source_types: options?.sourceTypes ?? null,
     p_limit: options?.limit ?? 5,
     p_rrf_k: 60,
+    p_enable_semantic: mode !== "fulltext",
+    p_enable_fulltext: mode !== "semantic",
+    p_candidate_multiplier: mode === "hybrid" ? 2 : 1,
   });
 
   if (error) {

@@ -8,12 +8,17 @@ export interface EmbeddingOptions {
   provider?: AiProvider;
   token?: string;
   tenantId?: string;
+  model?: string;
 }
 
-export async function generateEmbedding(
-  text: string,
+const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+
+export async function generateEmbeddings(
+  input: string[],
   options?: EmbeddingOptions
-): Promise<number[]> {
+): Promise<number[][]> {
+  if (input.length === 0) return [];
+
   const provider = options?.provider ?? getDefaultProvider();
   const config = getProviderConfig(provider);
   const token = options?.token || config.defaultToken;
@@ -28,8 +33,8 @@ export async function generateEmbedding(
 
   const url = `${config.baseUrl}/v1/embeddings`;
   const body = JSON.stringify({
-    input: text,
-    model: "text-embedding-3-small",
+    input,
+    model: options?.model || DEFAULT_EMBEDDING_MODEL,
   });
 
   const controller = new AbortController();
@@ -48,7 +53,15 @@ export async function generateEmbedding(
     }
 
     const data = await res.json();
-    return data.data?.[0]?.embedding ?? data.embedding ?? [];
+    if (Array.isArray(data.data)) {
+      return data.data
+        .sort((a: { index?: number }, b: { index?: number }) => (a.index ?? 0) - (b.index ?? 0))
+        .map((row: { embedding?: number[] }) => row.embedding ?? []);
+    }
+    if (Array.isArray(data.embedding)) {
+      return [data.embedding];
+    }
+    return [];
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new Error(
@@ -59,4 +72,12 @@ export async function generateEmbedding(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function generateEmbedding(
+  text: string,
+  options?: EmbeddingOptions
+): Promise<number[]> {
+  const [embedding] = await generateEmbeddings([text], options);
+  return embedding ?? [];
 }

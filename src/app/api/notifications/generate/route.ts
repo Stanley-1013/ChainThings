@@ -2,6 +2,26 @@ import { supabaseAdmin as adminDb } from "@/lib/supabase/admin";
 import { chatCompletion } from "@/lib/ai-gateway";
 import { NextResponse } from "next/server";
 
+const ITEM_LIMIT = 8;
+const ITEM_SNIPPET_CHARS = 120;
+const TASK_LIMIT = 8;
+const TASK_SNIPPET_CHARS = 80;
+
+function buildBoundedLines(
+  lines: string[],
+  maxItems: number,
+  maxCharsPerItem: number
+): string[] {
+  return lines
+    .filter(Boolean)
+    .slice(0, maxItems)
+    .map((line) =>
+      line.length <= maxCharsPerItem
+        ? line
+        : `${line.slice(0, maxCharsPerItem).trimEnd()}...`
+    );
+}
+
 const NOTIFICATION_PROMPT = `You are a personal assistant generating a brief notification digest.
 Based on the following meeting notes and tasks, create a concise summary.
 Return JSON with:
@@ -122,14 +142,22 @@ export async function POST(request: Request) {
       const contextParts: string[] = [];
       if (recentItems?.length) {
         contextParts.push("Recent Meeting Notes:");
-        for (const item of recentItems) {
-          contextParts.push(`- ${item.title}: ${(item.content || "").substring(0, 300)}`);
+        for (const line of buildBoundedLines(
+          recentItems.map((item) => `${item.title}: ${item.content || ""}`),
+          ITEM_LIMIT,
+          ITEM_SNIPPET_CHARS
+        )) {
+          contextParts.push(`- ${line}`);
         }
       }
       if (memories?.length) {
         contextParts.push("\nPending Tasks:");
-        for (const m of memories) {
-          contextParts.push(`- ${m.content}`);
+        for (const line of buildBoundedLines(
+          memories.map((m) => m.content),
+          TASK_LIMIT,
+          TASK_SNIPPET_CHARS
+        )) {
+          contextParts.push(`- ${line}`);
         }
       }
 
