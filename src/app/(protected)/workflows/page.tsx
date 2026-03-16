@@ -12,11 +12,9 @@ import {
   Zap, 
   Plus, 
   Loader2, 
-  ExternalLink, 
   Clock,
   CheckCircle2,
-  AlertCircle,
-  Play
+  AlertCircle
 } from "lucide-react";
 import { toast } from "sonner";
 // cn utility available if needed
@@ -40,7 +38,8 @@ export default function WorkflowsPage() {
     const { data } = await supabase
       .from("chainthings_workflows")
       .select("id, name, description, status, n8n_workflow_id, created_at")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(0, 49);
 
     if (data) setWorkflows(data as Workflow[]);
   }, []);
@@ -154,17 +153,9 @@ export default function WorkflowsPage() {
                       {new Date(wf.created_at).toLocaleDateString()}
                     </div>
                     {wf.n8n_workflow_id && (
-                      <Button variant="outline" size="sm" asChild className="h-8">
-                        <a
-                          href={`http://localhost:5678/workflow/${wf.n8n_workflow_id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <Play className="mr-1.5 h-3 w-3 fill-current" />
-                          Open in n8n
-                          <ExternalLink className="ml-1.5 h-3 w-3 opacity-50" />
-                        </a>
-                      </Button>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        n8n: {wf.n8n_workflow_id}
+                      </span>
                     )}
                   </div>
                 </CardContent>

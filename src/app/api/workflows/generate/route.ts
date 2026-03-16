@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
-import { chatCompletion } from "@/lib/openclaw/client";
+import { chatCompletion, type ChatCompletionOptions } from "@/lib/openclaw/client";
 import { createWorkflow } from "@/lib/n8n/client";
+import { validateWorkflowNodes } from "@/lib/n8n/validation";
 import { NextResponse } from "next/server";
 
 const SYSTEM_PROMPT = `You are an n8n workflow generator. When asked to create a workflow, respond ONLY with valid JSON in this format:
@@ -39,6 +40,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
+  // Look up tenant's OpenClaw config for per-tenant isolation
+  const { data: openclawIntegration } = await supabase
+    .from("chainthings_integrations")
+    .select("config")
+    .eq("tenant_id", profile.tenant_id)
+    .eq("service", "openclaw")
+    .single();
+
+  const openclawConfig = openclawIntegration?.config as
+    | Record<string, unknown>
+    | null;
+  const openclawOptions: ChatCompletionOptions = {
+    token: (openclawConfig?.api_token as string) || undefined,
+    tenantId: profile.tenant_id,
+  };
+
   // Create workflow record
   const { data: workflowRecord, error: insertError } = await supabase
     .from("chainthings_workflows")
@@ -62,7 +79,8 @@ export async function POST(request: Request) {
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: prompt },
       ],
-      user.id
+      user.id,
+      openclawOptions
     );
 
     const content = response.choices[0]?.message?.content || "";
@@ -75,13 +93,22 @@ export async function POST(request: Request) {
 
     const workflowData = JSON.parse(jsonMatch[0]);
 
+    // Validate node types before creating in n8n
+    const validation = validateWorkflowNodes(workflowData.nodes || []);
+    if (!validation.valid) {
+      throw new Error(
+        `Disallowed node types: ${validation.disallowed.join(", ")}`
+      );
+    }
+
     // Create workflow in n8n
     let n8nWorkflow = null;
     try {
       n8nWorkflow = await createWorkflow(
         workflowData.name || prompt.substring(0, 50),
         workflowData.nodes || [],
-        workflowData.connections || {}
+        workflowData.connections || {},
+        ["chainthings", `tenant:${profile.tenant_id}`]
       );
     } catch {
       // n8n API might not be configured yet — save the data anyway

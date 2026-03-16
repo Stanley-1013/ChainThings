@@ -12,7 +12,8 @@ export default async function ChatListPage() {
   const { data: conversations } = await supabase
     .from("chainthings_conversations")
     .select("id, title, updated_at")
-    .order("updated_at", { ascending: false });
+    .order("updated_at", { ascending: false })
+    .range(0, 49);
 
   function formatRelativeTime(dateString: string) {
     const date = new Date(dateString);

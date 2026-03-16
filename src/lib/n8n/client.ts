@@ -1,26 +1,85 @@
 const N8N_URL = process.env.N8N_API_URL!;
 const N8N_API_KEY = process.env.N8N_API_KEY || "";
+const N8N_TIMEOUT_MS = Number(process.env.N8N_TIMEOUT_MS) || 10_000;
 
-interface N8nWorkflow {
+export interface N8nTag {
+  id: string;
+  name: string;
+}
+
+export interface N8nWorkflow {
   id: string;
   name: string;
   active: boolean;
-  tags?: { name: string }[];
+  tags?: N8nTag[];
   nodes?: unknown[];
   connections?: Record<string, unknown>;
+}
+
+async function n8nFetch(
+  path: string,
+  init?: RequestInit
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), N8N_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${N8N_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "X-N8N-API-KEY": N8N_API_KEY,
+        ...init?.headers,
+      },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`n8n error ${res.status}: ${text}`);
+    }
+    return res;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`n8n request timed out after ${N8N_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function findOrCreateTag(tagName: string): Promise<N8nTag> {
+  // List existing tags and find by name
+  const listRes = await n8nFetch("/api/v1/tags");
+  const tags: N8nTag[] = await listRes.json();
+  const existing = tags.find((t) => t.name === tagName);
+  if (existing) return existing;
+
+  // Create if not found
+  const createRes = await n8nFetch("/api/v1/tags", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: tagName }),
+  });
+  return createRes.json();
+}
+
+async function applyTags(workflowId: string, tagNames: string[]) {
+  const tagObjects = await Promise.all(tagNames.map(findOrCreateTag));
+  await n8nFetch(`/api/v1/workflows/${workflowId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tags: tagObjects }),
+  });
 }
 
 export async function createWorkflow(
   name: string,
   nodes: unknown[],
-  connections: Record<string, unknown>
+  connections: Record<string, unknown>,
+  tags?: string[]
 ): Promise<N8nWorkflow> {
-  const res = await fetch(`${N8N_URL}/api/v1/workflows`, {
+  const res = await n8nFetch("/api/v1/workflows", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-N8N-API-KEY": N8N_API_KEY,
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name: `[ChainThings] ${name}`,
       nodes,
@@ -28,38 +87,38 @@ export async function createWorkflow(
       settings: {},
     }),
   });
+  const workflow: N8nWorkflow = await res.json();
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`n8n error ${res.status}: ${text}`);
+  // Apply tags via separate API calls (n8n doesn't accept tags on create)
+  if (tags && tags.length > 0) {
+    try {
+      await applyTags(workflow.id, tags);
+    } catch {
+      // Non-fatal: workflow was created, tagging failed
+      console.warn(`Failed to apply tags to workflow ${workflow.id}`);
+    }
   }
 
+  return workflow;
+}
+
+export async function getWorkflow(id: string): Promise<N8nWorkflow> {
+  const res = await n8nFetch(`/api/v1/workflows/${id}`);
   return res.json();
 }
 
 export async function activateWorkflow(id: string): Promise<N8nWorkflow> {
-  const res = await fetch(`${N8N_URL}/api/v1/workflows/${id}/activate`, {
+  const res = await n8nFetch(`/api/v1/workflows/${id}/activate`, {
     method: "POST",
-    headers: { "X-N8N-API-KEY": N8N_API_KEY },
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`n8n activate error ${res.status}: ${text}`);
-  }
-
   return res.json();
 }
 
+export async function deleteWorkflow(id: string): Promise<void> {
+  await n8nFetch(`/api/v1/workflows/${id}`, { method: "DELETE" });
+}
+
 export async function listWorkflows(): Promise<{ data: N8nWorkflow[] }> {
-  const res = await fetch(`${N8N_URL}/api/v1/workflows`, {
-    headers: { "X-N8N-API-KEY": N8N_API_KEY },
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`n8n error ${res.status}: ${text}`);
-  }
-
+  const res = await n8nFetch("/api/v1/workflows");
   return res.json();
 }
