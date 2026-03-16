@@ -2,15 +2,15 @@
 
 ## 專案願景
 
-ChainThings 是一個多租戶 Next.js 應用，整合 Supabase（認證、資料庫、儲存）、OpenClaw AI 閘道（聊天）、以及 n8n（工作流自動化）。它為每個租戶提供隔離的聊天、檔案管理、工作流產生和第三方整合（如 Hedy.ai 會議記錄）能力。
+ChainThings 是一個多租戶 Next.js 應用，整合 Supabase（認證、資料庫、儲存）、AI 閘道（ZeroClaw 或 OpenClaw）、以及 n8n（工作流自動化）。它為每個租戶提供隔離的聊天、檔案管理、工作流產生和第三方整合（如 Hedy.ai 會議記錄）能力。
 
 ## 架構總覽
 
 - **框架**: Next.js 16 (App Router, React 19, TypeScript 5, Tailwind CSS 4)
 - **認證與資料**: Supabase（Auth + PostgreSQL + Storage），透過 RLS 實現多租戶行級隔離
-- **AI 閘道**: OpenClaw（OpenAI 相容 API），支援每租戶獨立 token 與系統提示詞，用於聊天對話和 n8n 工作流 JSON 產生
+- **AI 閘道**: ZeroClaw（預設，`POST /webhook`）或 OpenClaw（legacy，OpenAI 相容 API），透過 `src/lib/ai-gateway/` 抽象層支援 provider 切換，每租戶可獨立配置 token 與系統提示詞
 - **工作流引擎**: n8n，透過 REST API 建立/啟用工作流，使用節點類型白名單限制 AI 產生的工作流
-- **部署**: Docker (standalone Next.js) + docker-compose，連接外部 `lab_net` 網路中的 Supabase、n8n、OpenClaw 容器
+- **部署**: Docker (standalone Next.js) + docker-compose，連接外部 `lab_net` 網路中的 Supabase、n8n、ZeroClaw/OpenClaw 容器
 - **多租戶模型**: 每個使用者註冊時自動產生 `tenant_id`（UUID），所有業務表透過 `tenant_id` + RLS 策略隔離
 
 ```
@@ -78,7 +78,8 @@ graph TD
 | 受保護頁面 | `src/app/(protected)/` | Dashboard、Chat、Files、Workflows、Settings |
 | API 路由 | `src/app/api/` | 聊天、檔案上傳、工作流產生、整合管理 |
 | Supabase 封裝 | `src/lib/supabase/` | 瀏覽器客戶端、伺服器端客戶端、admin 客戶端 |
-| OpenClaw 客戶端 | `src/lib/openclaw/` | AI 聊天補全介面封裝，支援每租戶 token 隔離與超時控制 |
+| AI 閘道 | `src/lib/ai-gateway/` | Provider-agnostic AI client（ZeroClaw `/webhook` + OpenClaw `/v1/chat/completions`），含格式轉換與超時控制 |
+| OpenClaw 客戶端 | `src/lib/openclaw/` | Deprecated re-export，指向 `ai-gateway` |
 | n8n 客戶端 | `src/lib/n8n/` | 工作流 CRUD（含超時）+ 節點類型白名單驗證 + Hedy webhook 範本 |
 | Webhook 端點 | `src/app/api/webhooks/` | Hedy webhook 接收端點，HMAC 簽章 + 時間戳防重放驗證 |
 | Items API | `src/app/api/items/` | 通用業務資料 CRUD API（列表 + 單項 CRUD） |
@@ -98,8 +99,12 @@ graph TD
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase 匿名金鑰 |
 | `SUPABASE_URL` | Supabase 內部 URL（伺服器端） |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase 服務角色金鑰 |
-| `OPENCLAW_GATEWAY_URL` | OpenClaw AI 閘道位址 |
-| `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 認證權杖 |
+| `ZEROCLAW_GATEWAY_URL` | ZeroClaw AI 閘道位址（預設 `http://localhost:42617`） |
+| `ZEROCLAW_GATEWAY_TOKEN` | ZeroClaw Bearer token（透過 `POST /pair` 取得） |
+| `ZEROCLAW_TIMEOUT_MS` | ZeroClaw 請求超時（預設 30000ms） |
+| `DEFAULT_AI_PROVIDER` | 預設 AI provider：`zeroclaw`（預設）或 `openclaw` |
+| `OPENCLAW_GATEWAY_URL` | OpenClaw AI 閘道位址（legacy，可選） |
+| `OPENCLAW_GATEWAY_TOKEN` | OpenClaw 認證權杖（legacy，可選） |
 | `OPENCLAW_TIMEOUT_MS` | OpenClaw 請求超時（預設 30000ms） |
 | `N8N_API_URL` | n8n API 位址 |
 | `N8N_API_KEY` | n8n API 金鑰 |
@@ -215,3 +220,4 @@ npx vitest run --reporter=verbose  # 詳細輸出
 | 2026-03-13 | 測試補充 | 新增 71 個單元測試覆蓋所有 API 路由 |
 | 2026-03-13 | 效能優化 | 外部服務超時、資料庫效能索引、中介軟體快速路徑、列表分頁 |
 | 2026-03-13 | 文檔更新 | 更新 CLAUDE.md 反映新增模組、安全機制、測試策略、環境變數 |
+| 2026-03-16 | AI 閘道遷移 | 新增 `src/lib/ai-gateway/` 抽象層，支援 ZeroClaw（預設）和 OpenClaw（legacy），108 個測試全數通過 |

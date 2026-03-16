@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
-import { chatCompletion, type ChatCompletionOptions } from "@/lib/openclaw/client";
+import { chatCompletion, type ChatCompletionOptions } from "@/lib/ai-gateway";
+import { generateEmbedding } from "@/lib/ai-gateway/embeddings";
+import { hybridSearch } from "@/lib/rag";
 import { createWorkflow } from "@/lib/n8n/client";
 import { validateWorkflowNodes } from "@/lib/n8n/validation";
 import { NextResponse } from "next/server";
@@ -52,19 +54,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  // Look up tenant's OpenClaw config (parallel with other independent queries below)
-  const { data: openclawIntegration } = await supabase
+  // Look up tenant's AI gateway config (zeroclaw preferred, openclaw fallback)
+  const { data: aiIntegrations } = await supabase
     .from("chainthings_integrations")
-    .select("config")
+    .select("service, config")
     .eq("tenant_id", profile.tenant_id)
-    .eq("service", "openclaw")
-    .single();
+    .in("service", ["zeroclaw", "openclaw"]);
 
-  const openclawConfig = openclawIntegration?.config as
-    | Record<string, unknown>
-    | null;
-  const openclawOptions: ChatCompletionOptions = {
-    token: (openclawConfig?.api_token as string) || undefined,
+  const zcIntegration = aiIntegrations?.find((i) => i.service === "zeroclaw");
+  const ocIntegration = aiIntegrations?.find((i) => i.service === "openclaw");
+  const activeIntegration = zcIntegration || ocIntegration;
+  const aiConfig = activeIntegration?.config as Record<string, unknown> | null;
+  const aiOptions: ChatCompletionOptions = {
+    provider: zcIntegration ? "zeroclaw" : ocIntegration ? "openclaw" : undefined,
+    token: (aiConfig?.api_token as string) || undefined,
     tenantId: profile.tenant_id,
   };
 
@@ -108,7 +111,7 @@ export async function POST(request: Request) {
   }));
 
   // Prepend tenant-specific system prompt if configured
-  const tenantSystemPrompt = openclawConfig?.system_prompt as
+  const tenantSystemPrompt = aiConfig?.system_prompt as
     | string
     | undefined;
   if (tenantSystemPrompt) {
@@ -120,12 +123,66 @@ export async function POST(request: Request) {
     chatMessages.unshift({ role: "system", content: N8N_SYSTEM_PROMPT });
   }
 
+  // RAG: retrieve relevant context for non-tool messages
+  let ragSources: Array<{ id: string; title: string | null; type: string }> = [];
+  if (tool !== "n8n") {
+    try {
+      const queryEmbedding = await generateEmbedding(message, {
+        provider: aiOptions.provider,
+        token: aiOptions.token,
+        tenantId: profile.tenant_id,
+      });
+
+      const results = await hybridSearch(queryEmbedding, message, {
+        limit: 5,
+      });
+
+      if (results.length > 0) {
+        ragSources = results.map((r) => ({
+          id: r.documentId,
+          title: r.title,
+          type: r.sourceType,
+        }));
+
+        const contextParts: string[] = ["[Relevant Context]"];
+        for (const result of results) {
+          const label = result.sourceType === "item" ? "Meeting Note" :
+            result.sourceType === "memory" ? "Memory" : "Conversation";
+          contextParts.push(`[${label}: ${result.title || "Untitled"}]\n${result.content}`);
+        }
+
+        // Fetch active memory entries (uses authenticated client with RLS)
+        const { data: memories } = await supabase
+          .from("chainthings_memory_entries")
+          .select("category, content")
+          .eq("tenant_id", profile.tenant_id)
+          .eq("status", "active")
+          .order("importance", { ascending: false })
+          .limit(10);
+
+        if (memories?.length) {
+          contextParts.push("\n[Assistant Memory]");
+          for (const m of memories) {
+            contextParts.push(`- [${m.category}] ${m.content}`);
+          }
+        }
+
+        chatMessages.unshift({
+          role: "system",
+          content: contextParts.join("\n") +
+            "\n\nUse the above context to answer the user's question. Cite sources when referencing specific meeting notes or tasks.",
+        });
+      }
+    } catch {
+      // RAG failure is non-fatal; continue without context
+    }
+  }
+
   try {
-    // Call OpenClaw with per-tenant config
     const response = await chatCompletion(
       chatMessages,
       user.id,
-      openclawOptions
+      aiOptions
     );
     const assistantContent =
       response.choices[0]?.message?.content || "No response";
@@ -191,7 +248,6 @@ export async function POST(request: Request) {
       role: "assistant",
       content: assistantContent,
       metadata: {
-        model: "openclaw:main",
         usage: response.usage,
         ...(n8nResult && { n8n: n8nResult }),
       },
@@ -201,6 +257,7 @@ export async function POST(request: Request) {
       conversationId: convId,
       message: assistantContent,
       n8n: n8nResult,
+      sources: ragSources.length > 0 ? ragSources : undefined,
     });
   } catch (err) {
     const errorMessage =

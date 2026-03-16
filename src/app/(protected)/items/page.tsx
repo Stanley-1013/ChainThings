@@ -6,7 +6,8 @@ import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FileText, Clock, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { FileText, Clock, ChevronRight, Plus } from "lucide-react";
 
 interface Item {
   id: string;
@@ -82,10 +83,18 @@ export default function ItemsListPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <PageHeader
-          title="Meeting Notes"
-          description="Notes captured from your meetings"
-        />
+        <div className="flex items-center justify-between">
+          <PageHeader
+            title="Meeting Notes"
+            description="Notes captured from your meetings"
+          />
+          <Link href="/items/new">
+            <Button size="sm">
+              <Plus className="h-4 w-4 mr-1" />
+              New
+            </Button>
+          </Link>
+        </div>
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
             <Card key={i}>
@@ -107,10 +116,18 @@ export default function ItemsListPage() {
   if (items.length === 0) {
     return (
       <div className="space-y-6">
-        <PageHeader
-          title="Meeting Notes"
-          description="Notes captured from your meetings"
-        />
+        <div className="flex items-center justify-between">
+          <PageHeader
+            title="Meeting Notes"
+            description="Notes captured from your meetings"
+          />
+          <Link href="/items/new">
+            <Button size="sm">
+              <Plus className="h-4 w-4 mr-1" />
+              New
+            </Button>
+          </Link>
+        </div>
         <EmptyState
           icon={FileText}
           title="No meeting notes yet"
@@ -123,10 +140,18 @@ export default function ItemsListPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Meeting Notes"
-        description="Notes captured from your meetings"
-      />
+      <div className="flex items-center justify-between">
+        <PageHeader
+          title="Meeting Notes"
+          description="Notes captured from your meetings"
+        />
+        <Link href="/items/new">
+          <Button size="sm">
+            <Plus className="h-4 w-4 mr-1" />
+            New
+          </Button>
+        </Link>
+      </div>
 
       {groupKeys.map((groupKey) => (
         <div key={groupKey} className="space-y-3">

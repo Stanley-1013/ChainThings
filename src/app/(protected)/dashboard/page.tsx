@@ -1,12 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
-import { 
-  MessageSquare, 
-  FolderOpen, 
-  Zap, 
-  FileText, 
-  ExternalLink 
+import { NotificationPanel } from "@/components/shared/notification-panel";
+import {
+  MessageSquare,
+  FolderOpen,
+  Zap,
+  FileText,
+  ExternalLink
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 
@@ -64,6 +65,8 @@ export default async function DashboardPage() {
           description="Processed notes"
         />
       </div>
+
+      <NotificationPanel />
 
       <div className="space-y-4">
         <h2 className="text-xl font-semibold tracking-tight">External Services</h2>
