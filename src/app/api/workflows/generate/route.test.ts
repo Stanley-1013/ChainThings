@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { POST } from "./route";
 import { createClient } from "@/lib/supabase/server";
-import { chatCompletion } from "@/lib/openclaw/client";
+import { chatCompletion } from "@/lib/ai-gateway";
 import { createWorkflow } from "@/lib/n8n/client";
 import { createMockSupabaseClient, mockProfile } from "@/__tests__/mocks/supabase";
 import { mockJsonWorkflowResponse, mockChatResponse } from "@/__tests__/mocks/openclaw";
@@ -53,9 +53,7 @@ function setupClient() {
       return {
         select: vi.fn(() => ({
           eq: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              single: vi.fn(() => ({ data: null, error: null })),
-            })),
+            in: vi.fn(() => ({ data: [], error: null })),
           })),
         })),
       } as never;

@@ -14,12 +14,11 @@ describe("generateHedyWebhookWorkflow", () => {
     expect(wf.name).toBe(`Hedy.ai Webhook (${tenantId.slice(0, 8)})`);
   });
 
-  it("generates 3 nodes: webhook, transform, http request", () => {
+  it("generates 2 nodes: webhook and http request", () => {
     const wf = generateHedyWebhookWorkflow(tenantId, appBaseUrl, webhookSecret);
-    expect(wf.nodes).toHaveLength(3);
+    expect(wf.nodes).toHaveLength(2);
     expect(wf.nodes[0].type).toBe("n8n-nodes-base.webhook");
-    expect(wf.nodes[1].type).toBe("n8n-nodes-base.code");
-    expect(wf.nodes[2].type).toBe("n8n-nodes-base.httpRequest");
+    expect(wf.nodes[1].type).toBe("n8n-nodes-base.httpRequest");
   });
 
   it("sets webhook path using tenant ID", () => {
@@ -28,18 +27,18 @@ describe("generateHedyWebhookWorkflow", () => {
     expect(wf.webhookUrl).toBe(`/webhook/hedy-${tenantId}`);
   });
 
-  it("embeds tenant ID and secret in transform code", () => {
+  it("embeds secret in http request header as expression", () => {
     const wf = generateHedyWebhookWorkflow(tenantId, appBaseUrl, webhookSecret);
-    const code = wf.nodes[1].parameters.jsCode;
-    expect(code).toContain(tenantId);
-    expect(code).toContain(webhookSecret);
-    expect(code).toContain("meeting_note");
-    expect(code).toContain("createHmac");
+    const headers = wf.nodes[1].parameters.headerParameters.parameters;
+    const secretHeader = headers.find(
+      (h: { name: string }) => h.name === "X-ChainThings-Secret"
+    );
+    expect(secretHeader.value).toContain(webhookSecret);
   });
 
   it("forwards to correct ChainThings API endpoint", () => {
     const wf = generateHedyWebhookWorkflow(tenantId, appBaseUrl, webhookSecret);
-    expect(wf.nodes[2].parameters.url).toBe(
+    expect(wf.nodes[1].parameters.url).toBe(
       `${appBaseUrl}/api/webhooks/hedy/${tenantId}`
     );
   });
@@ -47,10 +46,17 @@ describe("generateHedyWebhookWorkflow", () => {
   it("has correct node connections", () => {
     const wf = generateHedyWebhookWorkflow(tenantId, appBaseUrl, webhookSecret);
     expect(wf.connections["Hedy Webhook"].main[0][0].node).toBe(
-      "Transform Data"
-    );
-    expect(wf.connections["Transform Data"].main[0][0].node).toBe(
       "Forward to ChainThings"
     );
+  });
+
+  it("maps Hedy body fields correctly in jsonBody expression", () => {
+    const wf = generateHedyWebhookWorkflow(tenantId, appBaseUrl, webhookSecret);
+    const jsonBody = wf.nodes[1].parameters.jsonBody;
+    expect(jsonBody).toContain("$json.body.title");
+    expect(jsonBody).toContain("$json.body.meeting_minutes");
+    expect(jsonBody).toContain("$json.body.transcript");
+    expect(jsonBody).toContain("$json.body.sessionId");
+    expect(jsonBody).toContain("meeting_note");
   });
 });

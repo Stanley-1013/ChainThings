@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { chatCompletion, type ChatCompletionOptions } from "@/lib/openclaw/client";
+import { chatCompletion, type ChatCompletionOptions } from "@/lib/ai-gateway";
 import { createWorkflow } from "@/lib/n8n/client";
 import { validateWorkflowNodes } from "@/lib/n8n/validation";
 import { NextResponse } from "next/server";
@@ -40,19 +40,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  // Look up tenant's OpenClaw config for per-tenant isolation
-  const { data: openclawIntegration } = await supabase
+  // Look up tenant's AI gateway config (zeroclaw preferred, openclaw fallback)
+  const { data: aiIntegrations } = await supabase
     .from("chainthings_integrations")
-    .select("config")
+    .select("service, config")
     .eq("tenant_id", profile.tenant_id)
-    .eq("service", "openclaw")
-    .single();
+    .in("service", ["zeroclaw", "openclaw"]);
 
-  const openclawConfig = openclawIntegration?.config as
-    | Record<string, unknown>
-    | null;
-  const openclawOptions: ChatCompletionOptions = {
-    token: (openclawConfig?.api_token as string) || undefined,
+  const zcIntegration = aiIntegrations?.find((i) => i.service === "zeroclaw");
+  const ocIntegration = aiIntegrations?.find((i) => i.service === "openclaw");
+  const activeIntegration = zcIntegration || ocIntegration;
+  const aiConfig = activeIntegration?.config as Record<string, unknown> | null;
+  const aiOptions: ChatCompletionOptions = {
+    provider: zcIntegration ? "zeroclaw" : ocIntegration ? "openclaw" : undefined,
+    token: (aiConfig?.api_token as string) || undefined,
     tenantId: profile.tenant_id,
   };
 
@@ -73,14 +74,13 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Ask OpenClaw to generate workflow JSON
     const response = await chatCompletion(
       [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: prompt },
       ],
       user.id,
-      openclawOptions
+      aiOptions
     );
 
     const content = response.choices[0]?.message?.content || "";

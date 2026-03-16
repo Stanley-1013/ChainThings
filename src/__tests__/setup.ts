@@ -4,6 +4,8 @@ import { vi } from "vitest";
 process.env.NEXT_PUBLIC_SUPABASE_URL = "http://localhost:8000";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "test-anon-key";
 process.env.SUPABASE_COOKIE_NAME = "sb-test-auth-token";
+process.env.ZEROCLAW_GATEWAY_URL = "http://localhost:42617";
+process.env.ZEROCLAW_GATEWAY_TOKEN = "test-zc-token";
 process.env.OPENCLAW_GATEWAY_URL = "http://localhost:18789";
 process.env.OPENCLAW_GATEWAY_TOKEN = "test-token";
 process.env.N8N_API_URL = "http://localhost:5678";
@@ -26,7 +28,15 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(),
 }));
 
-// Mock @/lib/openclaw/client
+// Mock @/lib/ai-gateway
+vi.mock("@/lib/ai-gateway", () => ({
+  chatCompletion: vi.fn(),
+  buildZeroClawPrompt: vi.fn(),
+  getDefaultProvider: vi.fn(() => "zeroclaw"),
+  getProviderConfig: vi.fn(),
+}));
+
+// Mock @/lib/openclaw/client (deprecated re-export)
 vi.mock("@/lib/openclaw/client", () => ({
   chatCompletion: vi.fn(),
 }));
