@@ -40,6 +40,11 @@ npm run dev
 
 App runs at `http://localhost:3001`.
 
+### Live Demo
+
+- **App**: https://darcey-phrenologic-shonda.ngrok-free.dev
+- **n8n**: https://unlovely-unannunciable-denese.ngrok-free.dev
+
 ### Docker
 
 ```bash
