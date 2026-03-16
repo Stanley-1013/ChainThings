@@ -1,5 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
-import { createWorkflow, activateWorkflow } from "@/lib/n8n/client";
+import {
+  createWorkflow,
+  activateWorkflow,
+  getWorkflow,
+  deleteWorkflow,
+  listWorkflows,
+} from "@/lib/n8n/client";
 import { generateHedyWebhookWorkflow } from "@/lib/n8n/templates/hedy-webhook";
 import { NextResponse } from "next/server";
 
@@ -46,44 +52,127 @@ export async function POST() {
     );
   }
 
-  // Check if workflow already exists
+  const n8nUrl = getWebhookBaseUrl();
+
+  // Check if workflow already exists — verify it's alive in n8n
   if (integration.config?.n8n_workflow_id) {
-    const n8nUrl = getWebhookBaseUrl();
-    return NextResponse.json({
-      data: {
-        webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
-        n8nWorkflowId: integration.config.n8n_workflow_id,
-        alreadyExists: true,
-      },
-    });
+    const workflowId = integration.config.n8n_workflow_id as string;
+
+    // Step 1: Check if workflow exists in n8n
+    let existing;
+    try {
+      existing = await getWorkflow(workflowId);
+    } catch {
+      // Workflow gone from n8n — clear stale ID and recreate below
+      await supabase
+        .from("chainthings_integrations")
+        .update({
+          config: { ...integration.config, n8n_workflow_id: null },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", integration.id);
+      existing = null;
+    }
+
+    if (existing) {
+      if (existing.active) {
+        return NextResponse.json({
+          data: {
+            webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
+            n8nWorkflowId: workflowId,
+            active: true,
+            alreadyExists: true,
+          },
+        });
+      }
+
+      // Step 2: Workflow exists but inactive — try to reactivate (separate error path)
+      try {
+        await activateWorkflow(workflowId);
+        return NextResponse.json({
+          data: {
+            webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
+            n8nWorkflowId: workflowId,
+            active: true,
+            reactivated: true,
+          },
+        });
+      } catch (activationErr) {
+        const msg =
+          activationErr instanceof Error
+            ? activationErr.message
+            : "Unknown error";
+        return NextResponse.json(
+          {
+            error: `Workflow exists but reactivation failed: ${msg}`,
+          },
+          { status: 502 }
+        );
+      }
+    }
   }
 
-  // Generate and create workflow
-  const supabaseUrl =
-    process.env.SUPABASE_URL || "http://localhost:8000";
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  // Generate and create workflow — POST to our own API instead of direct Supabase
+  const appBaseUrl =
+    process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001";
+  const webhookSecret = process.env.CHAINTHINGS_WEBHOOK_SECRET!;
 
   const template = generateHedyWebhookWorkflow(
     profile.tenant_id,
-    supabaseUrl,
-    serviceRoleKey
+    appBaseUrl,
+    webhookSecret
   );
+
+  // Clean up any orphaned workflows with the same webhook path to avoid conflicts
+  try {
+    const { data: allWorkflows } = await listWorkflows();
+    const orphaned = allWorkflows.filter(
+      (wf) =>
+        wf.name.includes(profile.tenant_id.slice(0, 8)) &&
+        wf.name.includes("Hedy")
+    );
+    for (const wf of orphaned) {
+      try {
+        await deleteWorkflow(wf.id);
+      } catch {
+        // best effort
+      }
+    }
+  } catch {
+    // listWorkflows failed — proceed anyway
+  }
 
   try {
     const workflow = await createWorkflow(
       template.name,
       template.nodes,
-      template.connections
+      template.connections,
+      ["chainthings", `tenant:${profile.tenant_id}`]
     );
 
     // Activate the workflow so the webhook is live
     try {
       await activateWorkflow(workflow.id);
-    } catch {
-      // Activation might fail if n8n requires manual activation — workflow still exists
+    } catch (activationErr) {
+      // Workflow exists but won't receive traffic — clean up and report
+      try {
+        await deleteWorkflow(workflow.id);
+      } catch {
+        // best effort cleanup
+      }
+      const msg =
+        activationErr instanceof Error
+          ? activationErr.message
+          : "Unknown error";
+      return NextResponse.json(
+        {
+          error: `Workflow created but activation failed: ${msg}. The webhook will not work until activation succeeds.`,
+        },
+        { status: 502 }
+      );
     }
 
-    // Save workflow ID back to integration config
+    // Only save workflow ID after successful activation
     await supabase
       .from("chainthings_integrations")
       .update({
@@ -95,13 +184,11 @@ export async function POST() {
       })
       .eq("id", integration.id);
 
-    const n8nUrl = getWebhookBaseUrl();
-
     return NextResponse.json({
       data: {
         webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
         n8nWorkflowId: workflow.id,
-        active: workflow.active,
+        active: true,
       },
     });
   } catch (err) {

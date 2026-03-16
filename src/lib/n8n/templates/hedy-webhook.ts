@@ -1,9 +1,10 @@
-// n8n workflow template: Hedy.ai webhook → Supabase chainthings_items
+// n8n workflow template: Hedy.ai webhook → ChainThings API → Supabase
+// Uses Set node (no code/crypto) to avoid n8n task runner restrictions
 
 export function generateHedyWebhookWorkflow(
   tenantId: string,
-  supabaseUrl: string,
-  serviceRoleKey: string
+  appBaseUrl: string,
+  webhookSecret: string
 ) {
   const webhookPath = `hedy-${tenantId}`;
 
@@ -26,72 +27,34 @@ export function generateHedyWebhookWorkflow(
       },
       {
         parameters: {
-          jsCode: `// Transform Hedy.ai webhook payload → chainthings_items format
-const input = $input.first().json;
-
-// Hedy sends meeting data with these fields:
-// title, summary, transcript, todos, highlights, session_id, etc.
-const item = {
-  tenant_id: "${tenantId}",
-  type: "meeting_note",
-  title: input.title || input.meeting_title || "Untitled Meeting",
-  content: [
-    input.summary || "",
-    "",
-    "---",
-    "",
-    input.transcript || input.transcription || "",
-  ].filter(Boolean).join("\\n"),
-  external_id: input.session_id || input.id || input.meeting_id || null,
-  metadata: {
-    source: "hedy.ai",
-    todos: input.todos || input.action_items || [],
-    highlights: input.highlights || input.key_points || [],
-    participants: input.participants || [],
-    duration: input.duration || null,
-    language: input.language || null,
-    raw_webhook: input,
-  },
-};
-
-return [{ json: item }];`,
-        },
-        id: "transform-data",
-        name: "Transform Data",
-        type: "n8n-nodes-base.code",
-        typeVersion: 2,
-        position: [470, 300],
-      },
-      {
-        parameters: {
           method: "POST",
-          url: `${supabaseUrl}/rest/v1/chainthings_items`,
+          url: `${appBaseUrl}/api/webhooks/hedy/${tenantId}`,
           sendHeaders: true,
           headerParameters: {
             parameters: [
-              { name: "apikey", value: serviceRoleKey },
-              { name: "Authorization", value: `Bearer ${serviceRoleKey}` },
+              {
+                name: "X-ChainThings-Secret",
+                value: `={{ "${webhookSecret}" }}`,
+              },
               { name: "Content-Type", value: "application/json" },
-              { name: "Prefer", value: "return=representation" },
             ],
           },
           sendBody: true,
           specifyBody: "json",
-          jsonBody: "={{ JSON.stringify($json) }}",
+          jsonBody: `={{\n  JSON.stringify({\n    type: "meeting_note",\n    title: $json.body.title || $json.body.meeting_title || "Untitled Meeting",\n    content: ($json.body.meeting_minutes || $json.body.recap || "") + "\\n\\n---\\n\\n" + ($json.body.transcript || $json.body.transcription || ""),\n    external_id: $json.body.sessionId || $json.body.session_id || $json.body.id || null,\n    metadata: {\n      source: "hedy.ai",\n      recap: $json.body.recap || null,\n      conversations: $json.body.conversations || null,\n      highlights: $json.body.highlights || [],\n      participants: $json.body.participants || [],\n      duration: $json.body.duration || null,\n      language: $json.body.language || null,\n      event: $json.body.event || null,\n      startTime: $json.body.startTime || null\n    }\n  })\n}}`,
         },
-        id: "save-to-supabase",
-        name: "Save to Supabase",
+        id: "forward-to-chainthings",
+        name: "Forward to ChainThings",
         type: "n8n-nodes-base.httpRequest",
         typeVersion: 4.2,
-        position: [690, 300],
+        position: [470, 300],
       },
     ],
     connections: {
       "Hedy Webhook": {
-        main: [[{ node: "Transform Data", type: "main", index: 0 }]],
-      },
-      "Transform Data": {
-        main: [[{ node: "Save to Supabase", type: "main", index: 0 }]],
+        main: [
+          [{ node: "Forward to ChainThings", type: "main", index: 0 }],
+        ],
       },
     },
     webhookUrl: `/webhook/${webhookPath}`,
