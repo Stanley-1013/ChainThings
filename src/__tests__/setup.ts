@@ -10,6 +10,8 @@ process.env.N8N_API_URL = "http://localhost:5678";
 process.env.N8N_API_KEY = "test-n8n-key";
 process.env.SUPABASE_URL = "http://localhost:8000";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role-key";
+process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3001";
+process.env.CHAINTHINGS_WEBHOOK_SECRET = "test-webhook-secret";
 
 // Mock next/headers
 vi.mock("next/headers", () => ({
@@ -32,8 +34,15 @@ vi.mock("@/lib/openclaw/client", () => ({
 // Mock @/lib/n8n/client
 vi.mock("@/lib/n8n/client", () => ({
   createWorkflow: vi.fn(),
+  getWorkflow: vi.fn(),
   activateWorkflow: vi.fn(),
+  deleteWorkflow: vi.fn(),
   listWorkflows: vi.fn(),
+}));
+
+// Mock @/lib/n8n/validation
+vi.mock("@/lib/n8n/validation", () => ({
+  validateWorkflowNodes: vi.fn(() => ({ valid: true, disallowed: [] })),
 }));
 
 // Mock @/lib/n8n/templates/hedy-webhook

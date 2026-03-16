@@ -79,6 +79,17 @@ function setupAuthenticatedClient() {
         insert: vi.fn(() => workflowInsertChain),
       } as never;
     }
+    if (table === "chainthings_integrations") {
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => ({ data: null, error: null })),
+            })),
+          })),
+        })),
+      } as never;
+    }
     return {} as never;
   });
 
