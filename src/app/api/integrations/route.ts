@@ -137,7 +137,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { id, config } = body as { id?: string; config?: unknown };
+  const { id, config, expected_updated_at } = body as { id?: string; config?: unknown; expected_updated_at?: string };
 
   if (!id) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
@@ -147,10 +147,10 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "config must be a plain object" }, { status: 400 });
   }
 
-  // Fetch existing to merge config
+  // Fetch existing to merge config (with updated_at for optimistic locking)
   const { data: existing } = await supabase
     .from("chainthings_integrations")
-    .select("config")
+    .select("config, updated_at")
     .eq("id", id)
     .eq("tenant_id", profile.tenant_id)
     .single();
@@ -159,6 +159,14 @@ export async function PUT(request: Request) {
     return NextResponse.json(
       { error: "Integration not found" },
       { status: 404 }
+    );
+  }
+
+  // Optimistic locking: reject if record was modified since client last read it
+  if (expected_updated_at && existing.updated_at !== expected_updated_at) {
+    return NextResponse.json(
+      { error: "Conflict: record was modified by another request. Please refresh and try again." },
+      { status: 409 }
     );
   }
 

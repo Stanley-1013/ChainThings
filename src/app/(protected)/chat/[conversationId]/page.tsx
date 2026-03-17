@@ -1,7 +1,7 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, lazy, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,10 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
-import { MarkdownRenderer } from "@/components/chat/markdown-renderer";
+
+const MarkdownRenderer = lazy(() =>
+  import("@/components/chat/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
+);
 import { MessageActions } from "@/components/chat/message-actions";
 import { RagSources, type RagSource } from "@/components/chat/rag-sources";
 import {
@@ -68,7 +71,7 @@ export default function ConversationPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const supabase = createClient();
+  const supabaseRef = useRef(createClient());
 
   useEffect(() => {
     if (!isNew && conversationId) {
@@ -86,13 +89,13 @@ export default function ConversationPage() {
   }, [messages, loading]);
 
   const loadMessages = useCallback(async () => {
-    const { data } = await supabase
+    const { data } = await supabaseRef.current
       .from("chainthings_messages")
       .select("id, role, content, created_at")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
     if (data) setMessages(data as Message[]);
-  }, [conversationId, supabase]);
+  }, [conversationId]);
 
   async function sendMessage(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -361,7 +364,9 @@ export default function ConversationPage() {
                     )}
                   >
                     {msg.role === "assistant" ? (
-                      <MarkdownRenderer content={msg.content} />
+                      <Suspense fallback={<div className="whitespace-pre-wrap">{msg.content}</div>}>
+                        <MarkdownRenderer content={msg.content} />
+                      </Suspense>
                     ) : (
                       <div className="whitespace-pre-wrap">{msg.content}</div>
                     )}
