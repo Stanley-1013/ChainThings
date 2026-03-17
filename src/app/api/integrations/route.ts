@@ -1,6 +1,22 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
+const SECRET_KEYS = ["api_key", "api_token", "secret", "password"];
+
+function redactSecrets(row: Record<string, unknown>): Record<string, unknown> {
+  const config = row.config as Record<string, unknown> | null;
+  if (!config) return row;
+  const redacted: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config)) {
+    if (SECRET_KEYS.includes(k) && typeof v === "string" && v.length > 0) {
+      redacted[k] = "••••••••";
+    } else {
+      redacted[k] = v;
+    }
+  }
+  return { ...row, config: redacted };
+}
+
 export async function GET() {
   const supabase = await createClient();
   const {
@@ -32,22 +48,7 @@ export async function GET() {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
-  // Redact secret fields from config before returning to client
-  const SECRET_KEYS = ["api_key", "api_token", "secret", "password"];
-  const safeData = (data || []).map((row: Record<string, unknown>) => {
-    const config = row.config as Record<string, unknown> | null;
-    if (!config) return row;
-    const redacted: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(config)) {
-      if (SECRET_KEYS.includes(k) && typeof v === "string" && v.length > 0) {
-        redacted[k] = "••••••••";
-      } else {
-        redacted[k] = v;
-      }
-    }
-    return { ...row, config: redacted };
-  });
-
+  const safeData = (data || []).map((row: Record<string, unknown>) => redactSecrets(row));
   return NextResponse.json({ data: safeData });
 }
 
@@ -87,6 +88,10 @@ export async function POST(request: Request) {
     );
   }
 
+  if (config !== undefined && (typeof config !== "object" || config === null || Array.isArray(config))) {
+    return NextResponse.json({ error: "config must be a plain object" }, { status: 400 });
+  }
+
   const { data, error } = await supabase
     .from("chainthings_integrations")
     .upsert(
@@ -107,7 +112,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
-  return NextResponse.json({ data });
+  return NextResponse.json({ data: redactSecrets(data as Record<string, unknown>) });
 }
 
 export async function PUT(request: Request) {
@@ -185,7 +190,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
-  return NextResponse.json({ data });
+  return NextResponse.json({ data: redactSecrets(data as Record<string, unknown>) });
 }
 
 export async function DELETE(request: Request) {

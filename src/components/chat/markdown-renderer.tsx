@@ -29,6 +29,7 @@ function CodeBlock({
     <div className="relative group/code my-3">
       <button
         onClick={handleCopy}
+        aria-label={copied ? "Copied" : "Copy code"}
         className="absolute right-2 top-2 p-1.5 rounded-md bg-muted/80 opacity-0 group-hover/code:opacity-100 transition-opacity hover:bg-muted"
       >
         {copied ? (

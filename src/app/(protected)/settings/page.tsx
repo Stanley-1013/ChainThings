@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useCallback } from "react";
 import { PageHeader } from "@/components/shared/page-header";
 import { User, Bell, Palette, Bot, Plug } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,11 +30,39 @@ function SettingsContent() {
     router.replace(`/settings?tab=${tab}`, { scroll: false });
   };
 
+  const handleTabKeyDown = useCallback(
+    (e: React.KeyboardEvent, isVertical: boolean) => {
+      const currentIdx = TABS.findIndex((t) => t.id === activeTab);
+      let nextIdx = currentIdx;
+      const next = isVertical ? "ArrowDown" : "ArrowRight";
+      const prev = isVertical ? "ArrowUp" : "ArrowLeft";
+      if (e.key === next) {
+        nextIdx = (currentIdx + 1) % TABS.length;
+      } else if (e.key === prev) {
+        nextIdx = (currentIdx - 1 + TABS.length) % TABS.length;
+      } else if (e.key === "Home") {
+        nextIdx = 0;
+      } else if (e.key === "End") {
+        nextIdx = TABS.length - 1;
+      } else {
+        return;
+      }
+      e.preventDefault();
+      setTab(TABS[nextIdx].id);
+      // Focus the new tab button
+      const tabEl = (e.currentTarget as HTMLElement).querySelector<HTMLButtonElement>(
+        `[data-tab="${TABS[nextIdx].id}"]`
+      );
+      tabEl?.focus();
+    },
+    [activeTab]
+  );
+
   return (
     <div className="flex flex-col lg:flex-row gap-6">
       {/* Tab navigation */}
       {/* Desktop: vertical sidebar */}
-      <nav role="tablist" aria-label="Settings" aria-orientation="vertical" className="hidden lg:flex flex-col w-52 shrink-0 space-y-1">
+      <nav role="tablist" aria-label="Settings" aria-orientation="vertical" className="hidden lg:flex flex-col w-52 shrink-0 space-y-1" onKeyDown={(e) => handleTabKeyDown(e, true)}>
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -42,6 +70,8 @@ function SettingsContent() {
             <button
               key={tab.id}
               role="tab"
+              data-tab={tab.id}
+              tabIndex={isActive ? 0 : -1}
               aria-selected={isActive}
               aria-controls={`settings-panel-${tab.id}`}
               onClick={() => setTab(tab.id)}
@@ -60,7 +90,7 @@ function SettingsContent() {
       </nav>
 
       {/* Mobile: horizontal scrollable tabs */}
-      <nav role="tablist" aria-label="Settings" className="lg:hidden flex gap-1 overflow-x-auto pb-2 -mx-4 px-4 scrollbar-none">
+      <nav role="tablist" aria-label="Settings" className="lg:hidden flex gap-1 overflow-x-auto pb-2 -mx-4 px-4 scrollbar-none" onKeyDown={(e) => handleTabKeyDown(e, false)}>
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -68,6 +98,8 @@ function SettingsContent() {
             <button
               key={tab.id}
               role="tab"
+              data-tab={tab.id}
+              tabIndex={isActive ? 0 : -1}
               aria-selected={isActive}
               aria-controls={`settings-panel-${tab.id}`}
               onClick={() => setTab(tab.id)}

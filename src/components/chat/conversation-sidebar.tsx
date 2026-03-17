@@ -212,6 +212,8 @@ export function ConversationSidebar({
                 {group.items.map((conv) => (
                   <div
                     key={conv.id}
+                    role="button"
+                    tabIndex={0}
                     className={cn(
                       "group/item flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm cursor-pointer transition-colors",
                       conv.id === currentConversationId
@@ -220,6 +222,11 @@ export function ConversationSidebar({
                     )}
                     onClick={() => {
                       if (renamingId !== conv.id) {
+                        router.push(`/chat/${conv.id}`);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && renamingId !== conv.id) {
                         router.push(`/chat/${conv.id}`);
                       }
                     }}

@@ -161,15 +161,14 @@ export async function POST() {
     webhookSecret
   );
 
-  // Clean up any orphaned workflows with the same webhook path to avoid conflicts
+  // Clean up any orphaned workflows for this tenant to avoid webhook path conflicts
   try {
     const { data: allWorkflows } = await listWorkflows();
+    const tenantTag = `tenant:${profile.tenant_id}`;
     const orphaned = allWorkflows.filter(
-      (wf) =>
-        wf.name.includes(profile.tenant_id.slice(0, 8)) &&
-        wf.name.includes("Hedy")
+      (wf) => wf.tags?.some((t) => t.name === tenantTag) &&
+              wf.tags?.some((t) => t.name === "chainthings")
     );
-    // Delete orphans in parallel instead of serially
     await Promise.allSettled(
       orphaned.map((wf) => deleteWorkflow(wf.id))
     );
