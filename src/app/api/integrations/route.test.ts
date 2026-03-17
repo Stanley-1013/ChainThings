@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GET, POST, DELETE } from "./route";
+import { GET, POST, PUT, DELETE } from "./route";
 import { createClient } from "@/lib/supabase/server";
 import { createMockSupabaseClient, mockProfile } from "@/__tests__/mocks/supabase";
 import { createJsonRequest, createDeleteRequest, getJsonResponse } from "@/__tests__/helpers";
@@ -271,5 +271,162 @@ describe("DELETE /api/integrations", () => {
 
     expect(response.status).toBe(500);
     expect(body.error).toBe("Internal server error");
+  });
+});
+
+const PUT_URL = "http://localhost:3000/api/integrations";
+
+function createPutRequest(body: unknown): Request {
+  return new Request(PUT_URL, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("PUT /api/integrations", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should return 401 for unauthenticated user", async () => {
+    const client = createMockSupabaseClient({ user: null });
+    mockCreateClient.mockResolvedValue(client as never);
+
+    const request = createPutRequest({ id: "int-1", config: { key: "val" } });
+    const response = await PUT(request);
+
+    expect(response.status).toBe(401);
+  });
+
+  it("should return 400 for invalid JSON", async () => {
+    const client = createMockSupabaseClient();
+    mockCreateClient.mockResolvedValue(client as never);
+
+    const request = new Request(PUT_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: "not json",
+    });
+    const response = await PUT(request);
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe("Invalid JSON");
+  });
+
+  it("should return 400 when id is missing", async () => {
+    const client = createMockSupabaseClient();
+    mockCreateClient.mockResolvedValue(client as never);
+
+    const request = createPutRequest({ config: { key: "val" } });
+    const response = await PUT(request);
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe("id is required");
+  });
+
+  it("should return 400 when config is not an object", async () => {
+    const client = createMockSupabaseClient();
+    mockCreateClient.mockResolvedValue(client as never);
+
+    const request = createPutRequest({ id: "int-1", config: "string" });
+    const response = await PUT(request);
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("plain object");
+  });
+
+  it("should return 409 on optimistic lock conflict", async () => {
+    const client = createMockSupabaseClient();
+    client.from = vi.fn((table: string) => {
+      if (table === "chainthings_profiles") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => ({ data: mockProfile, error: null })),
+            })),
+          })),
+        } as never;
+      }
+      if (table === "chainthings_integrations") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn(() => ({
+                  data: { config: { old: "val" }, updated_at: "2026-03-17T10:00:00Z" },
+                  error: null,
+                })),
+              })),
+            })),
+          })),
+        } as never;
+      }
+      return {} as never;
+    });
+    mockCreateClient.mockResolvedValue(client as never);
+
+    const request = createPutRequest({
+      id: "int-1",
+      config: { new: "val" },
+      expected_updated_at: "2026-03-16T09:00:00Z",
+    });
+    const response = await PUT(request);
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(409);
+    expect(body.error).toContain("Conflict");
+  });
+
+  it("should merge config and return updated integration", async () => {
+    const merged = { id: "int-1", service: "zeroclaw", config: { old: "val", new: "val" } };
+    const updateEq = vi.fn(() => ({
+      eq: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn(() => ({ data: merged, error: null })),
+        })),
+      })),
+    }));
+    const client = createMockSupabaseClient();
+    client.from = vi.fn((table: string) => {
+      if (table === "chainthings_profiles") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => ({ data: mockProfile, error: null })),
+            })),
+          })),
+        } as never;
+      }
+      if (table === "chainthings_integrations") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn(() => ({
+                  data: { config: { old: "val" }, updated_at: "2026-03-17T10:00:00Z" },
+                  error: null,
+                })),
+              })),
+            })),
+          })),
+          update: vi.fn(() => ({
+            eq: updateEq,
+          })),
+        } as never;
+      }
+      return {} as never;
+    });
+    mockCreateClient.mockResolvedValue(client as never);
+
+    const request = createPutRequest({ id: "int-1", config: { new: "val" } });
+    const response = await PUT(request);
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual(merged);
   });
 });
