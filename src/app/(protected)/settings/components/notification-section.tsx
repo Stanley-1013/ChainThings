@@ -47,11 +47,13 @@ export function NotificationSection() {
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    fetch("/api/notifications/settings")
+    const controller = new AbortController();
+    fetch("/api/notifications/settings", { signal: controller.signal })
       .then((r) => r.json())
       .then((json) => setSettings(json.data))
-      .catch(() => toast.error("Failed to load notification settings"))
+      .catch((err) => { if (err.name !== "AbortError") toast.error("Failed to load notification settings"); })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   }, []);
 
   const handleSave = async () => {
@@ -114,7 +116,7 @@ export function NotificationSection() {
         {/* Enable toggle */}
         <div className="flex items-center justify-between">
           <div>
-            <Label>Enable Notifications</Label>
+            <Label id="notify-toggle-label">Enable Notifications</Label>
             <p className="text-xs text-muted-foreground mt-0.5">
               Receive AI-powered summaries of your activity
             </p>
@@ -122,6 +124,7 @@ export function NotificationSection() {
           <button
             role="switch"
             aria-checked={settings?.enabled}
+            aria-labelledby="notify-toggle-label"
             onClick={() => update({ enabled: !settings?.enabled })}
             className={cn(
               "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors",

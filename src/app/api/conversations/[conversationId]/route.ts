@@ -56,7 +56,8 @@ export async function PATCH(
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Conversations API error:", error.message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
   if (!data) {
@@ -107,12 +108,7 @@ export async function DELETE(
     );
   }
 
-  // Now safe to delete messages (tenant-verified)
-  await supabase
-    .from("chainthings_messages")
-    .delete()
-    .eq("conversation_id", conversationId);
-
+  // Messages are deleted via FK cascade (conversation_id references conversations.id)
   const { error } = await supabase
     .from("chainthings_conversations")
     .delete()
@@ -120,7 +116,8 @@ export async function DELETE(
     .eq("tenant_id", profile.tenant_id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Conversations API error:", error.message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
   return new NextResponse(null, { status: 204 });

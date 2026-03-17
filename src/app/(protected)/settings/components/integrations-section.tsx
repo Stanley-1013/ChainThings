@@ -54,7 +54,9 @@ export function IntegrationsSection() {
         (i: Integration) => i.service === "hedy.ai"
       );
       if (hedy) {
-        setHedyApiKey((hedy.config?.api_key as string) || "");
+        // API returns redacted key ("••••••••") — don't pre-fill the input with it
+        const rawKey = (hedy.config?.api_key as string) || "";
+        setHedyApiKey(rawKey.includes("•") ? "" : rawKey);
         if (hedy.config?.n8n_workflow_id) {
           try {
             const setupRes = await fetch("/api/integrations/hedy/setup", { method: "POST" });

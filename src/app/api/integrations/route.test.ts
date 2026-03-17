@@ -101,7 +101,7 @@ describe("GET /api/integrations", () => {
     const body = await getJsonResponse(response);
 
     expect(response.status).toBe(500);
-    expect(body.error).toBe("DB error");
+    expect(body.error).toBe("Internal server error");
   });
 });
 
@@ -155,7 +155,7 @@ describe("POST /api/integrations", () => {
     const body = await getJsonResponse(response);
 
     expect(response.status).toBe(500);
-    expect(body.error).toBe("Conflict");
+    expect(body.error).toBe("Internal server error");
   });
 });
 
@@ -270,6 +270,6 @@ describe("DELETE /api/integrations", () => {
     const body = await getJsonResponse(response);
 
     expect(response.status).toBe(500);
-    expect(body.error).toBe("FK violation");
+    expect(body.error).toBe("Internal server error");
   });
 });

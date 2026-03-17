@@ -130,6 +130,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
                     className="text-primary underline underline-offset-2 hover:text-primary/80"
                   >
                     {children}
+                    <span className="sr-only"> (opens in new window)</span>
                   </a>
                 );
               },

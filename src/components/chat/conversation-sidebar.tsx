@@ -183,6 +183,7 @@ export function ConversationSidebar({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search..."
+            aria-label="Search conversations"
             className="h-8 pl-8 text-sm bg-background"
           />
         </div>

@@ -29,7 +29,8 @@ export function AiSection() {
   const [activeIntegration, setActiveIntegration] = useState<Integration | null>(null);
 
   useEffect(() => {
-    fetch("/api/integrations")
+    const controller = new AbortController();
+    fetch("/api/integrations", { signal: controller.signal })
       .then((r) => r.json())
       .then((json) => {
         const data = json.data || [];
@@ -42,8 +43,9 @@ export function AiSection() {
           setSystemPrompt((active.config?.system_prompt as string) || "");
         }
       })
-      .catch(() => toast.error("Failed to load AI settings"))
+      .catch((err) => { if (err.name !== "AbortError") toast.error("Failed to load AI settings"); })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   }, []);
 
   const handleSave = async () => {

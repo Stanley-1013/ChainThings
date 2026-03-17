@@ -26,14 +26,16 @@ export function ProfileSection() {
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    fetch("/api/profile")
+    const controller = new AbortController();
+    fetch("/api/profile", { signal: controller.signal })
       .then((r) => r.json())
       .then((json) => {
         setProfile(json.data);
         setDisplayName(json.data?.display_name || "");
       })
-      .catch(() => toast.error("Failed to load profile"))
+      .catch((err) => { if (err.name !== "AbortError") toast.error("Failed to load profile"); })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   }, []);
 
   const handleSave = async () => {

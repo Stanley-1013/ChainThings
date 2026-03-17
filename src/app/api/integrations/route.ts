@@ -28,10 +28,27 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Integrations API error:", error.message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
-  return NextResponse.json({ data });
+  // Redact secret fields from config before returning to client
+  const SECRET_KEYS = ["api_key", "api_token", "secret", "password"];
+  const safeData = (data || []).map((row: Record<string, unknown>) => {
+    const config = row.config as Record<string, unknown> | null;
+    if (!config) return row;
+    const redacted: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(config)) {
+      if (SECRET_KEYS.includes(k) && typeof v === "string" && v.length > 0) {
+        redacted[k] = "••••••••";
+      } else {
+        redacted[k] = v;
+      }
+    }
+    return { ...row, config: redacted };
+  });
+
+  return NextResponse.json({ data: safeData });
 }
 
 export async function POST(request: Request) {
@@ -54,7 +71,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const { service, label, config } = await request.json();
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const { service, label, config } = body as { service?: string; label?: string; config?: unknown };
 
   if (!service) {
     return NextResponse.json(
@@ -79,7 +103,8 @@ export async function POST(request: Request) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Integrations API error:", error.message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
   return NextResponse.json({ data });
@@ -148,7 +173,8 @@ export async function PUT(request: Request) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Integrations API error:", error.message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
   return NextResponse.json({ data });
@@ -174,7 +200,14 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const { id } = await request.json();
+  let delBody: Record<string, unknown>;
+  try {
+    delBody = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const { id } = delBody as { id?: string };
 
   if (!id) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
@@ -187,7 +220,8 @@ export async function DELETE(request: Request) {
     .eq("tenant_id", profile.tenant_id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Integrations API error:", error.message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });
