@@ -92,6 +92,43 @@ describe("GET /api/integrations", () => {
     expect(body.data).toEqual(integrations);
   });
 
+  it("should redact secret fields in config", async () => {
+    const integrations = [
+      {
+        id: "int-1",
+        service: "zeroclaw",
+        label: "ZeroClaw",
+        config: { api_token: "secret-token-123", system_prompt: "Be helpful", api_key: "sk-abc" },
+        enabled: true,
+      },
+    ];
+    setupClient({
+      chainthings_integrations: { data: integrations, error: null },
+    });
+
+    const response = await GET();
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(body.data[0].config.api_token).toBe("••••••••");
+    expect(body.data[0].config.api_key).toBe("••••••••");
+    expect(body.data[0].config.system_prompt).toBe("Be helpful");
+  });
+
+  it("should not redact empty secret fields", async () => {
+    const integrations = [
+      { id: "int-1", service: "test", label: "Test", config: { api_key: "" }, enabled: true },
+    ];
+    setupClient({
+      chainthings_integrations: { data: integrations, error: null },
+    });
+
+    const response = await GET();
+    const body = await getJsonResponse(response);
+
+    expect(body.data[0].config.api_key).toBe("");
+  });
+
   it("should return 500 on database error", async () => {
     setupClient({
       chainthings_integrations: { data: null, error: { message: "DB error" } },
@@ -129,6 +166,28 @@ describe("POST /api/integrations", () => {
 
     expect(response.status).toBe(400);
     expect(body.error).toBe("service is required");
+  });
+
+  it("should return 400 when config is not an object", async () => {
+    setupClient();
+
+    const request = createJsonRequest(BASE_URL, { service: "test", config: "string" });
+    const response = await POST(request);
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("plain object");
+  });
+
+  it("should return 400 when config is an array", async () => {
+    setupClient();
+
+    const request = createJsonRequest(BASE_URL, { service: "test", config: [1, 2] });
+    const response = await POST(request);
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("plain object");
   });
 
   it("should upsert and return integration", async () => {

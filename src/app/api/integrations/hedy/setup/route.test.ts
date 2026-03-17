@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { POST } from "./route";
+import { GET, POST } from "./route";
 import { createClient } from "@/lib/supabase/server";
 import {
   createWorkflow,
@@ -264,5 +264,54 @@ describe("POST /api/integrations/hedy/setup", () => {
       expect.any(Object),
       ["chainthings", "tenant:tenant-456"]
     );
+  });
+});
+
+describe("GET /api/integrations/hedy/setup", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should return 401 for unauthenticated user", async () => {
+    const client = createMockSupabaseClient({ user: null });
+    mockCreateClient.mockResolvedValue(client as never);
+
+    const response = await GET();
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(401);
+    expect(body.error).toBe("Unauthorized");
+  });
+
+  it("should return configured: false when no workflow ID", async () => {
+    setupClient({ id: "int-1", config: {} });
+
+    const response = await GET();
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(body.data.configured).toBe(false);
+  });
+
+  it("should return configured: false when no hedy integration", async () => {
+    setupClient(null);
+
+    const response = await GET();
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(body.data.configured).toBe(false);
+  });
+
+  it("should return webhook URL when workflow ID exists", async () => {
+    setupClient({ id: "int-1", config: { n8n_workflow_id: "wf-123" } });
+
+    const response = await GET();
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(200);
+    expect(body.data.configured).toBe(true);
+    expect(body.data.webhookUrl).toContain("hedy-tenant-456");
+    expect(body.data.n8nWorkflowId).toBe("wf-123");
   });
 });
