@@ -248,7 +248,7 @@ describe("POST /api/integrations/hedy/setup", () => {
     const body = await getJsonResponse(response);
 
     expect(response.status).toBe(502);
-    expect(body.error).toContain("n8n down");
+    expect(body.error).toContain("Failed to create n8n workflow");
   });
 
   it("should pass tenant tags to createWorkflow", async () => {

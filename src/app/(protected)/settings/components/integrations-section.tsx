@@ -59,7 +59,8 @@ export function IntegrationsSection() {
         setHedyApiKey(rawKey.includes("•") ? "" : rawKey);
         if (hedy.config?.n8n_workflow_id) {
           try {
-            const setupRes = await fetch("/api/integrations/hedy/setup", { method: "POST" });
+            // Use GET (read-only) to check webhook status — no side effects
+            const setupRes = await fetch("/api/integrations/hedy/setup");
             const setupJson = await setupRes.json();
             if (setupJson.data?.webhookUrl) {
               setWebhookUrl(setupJson.data.webhookUrl);

@@ -17,6 +17,49 @@ function getWebhookBaseUrl(): string {
   return url.replace(/\/+$/, "");
 }
 
+// GET: Read-only status check — no side effects
+export async function GET() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data: profile } = await supabase
+    .from("chainthings_profiles")
+    .select("tenant_id")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile) {
+    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+  }
+
+  const { data: integration } = await supabase
+    .from("chainthings_integrations")
+    .select("config")
+    .eq("tenant_id", profile.tenant_id)
+    .eq("service", "hedy.ai")
+    .single();
+
+  if (!integration?.config?.n8n_workflow_id) {
+    return NextResponse.json({ data: { configured: false } });
+  }
+
+  const n8nUrl = getWebhookBaseUrl();
+  return NextResponse.json({
+    data: {
+      configured: true,
+      webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
+      n8nWorkflowId: integration.config.n8n_workflow_id,
+    },
+  });
+}
+
+// POST: Setup/activate workflow (has side effects)
 export async function POST() {
   const supabase = await createClient();
   const {
@@ -98,14 +141,9 @@ export async function POST() {
           },
         });
       } catch (activationErr) {
-        const msg =
-          activationErr instanceof Error
-            ? activationErr.message
-            : "Unknown error";
+        console.error("Hedy workflow reactivation failed:", activationErr instanceof Error ? activationErr.message : activationErr);
         return NextResponse.json(
-          {
-            error: `Workflow exists but reactivation failed: ${msg}`,
-          },
+          { error: "Workflow exists but reactivation failed. Please try again." },
           { status: 502 }
         );
       }
@@ -131,13 +169,10 @@ export async function POST() {
         wf.name.includes(profile.tenant_id.slice(0, 8)) &&
         wf.name.includes("Hedy")
     );
-    for (const wf of orphaned) {
-      try {
-        await deleteWorkflow(wf.id);
-      } catch {
-        // best effort
-      }
-    }
+    // Delete orphans in parallel instead of serially
+    await Promise.allSettled(
+      orphaned.map((wf) => deleteWorkflow(wf.id))
+    );
   } catch {
     // listWorkflows failed — proceed anyway
   }
@@ -160,14 +195,9 @@ export async function POST() {
       } catch {
         // best effort cleanup
       }
-      const msg =
-        activationErr instanceof Error
-          ? activationErr.message
-          : "Unknown error";
+      console.error("Hedy workflow activation failed:", activationErr instanceof Error ? activationErr.message : activationErr);
       return NextResponse.json(
-        {
-          error: `Workflow created but activation failed: ${msg}. The webhook will not work until activation succeeds.`,
-        },
+        { error: "Workflow created but activation failed. The webhook will not work until activation succeeds." },
         { status: 502 }
       );
     }
@@ -192,9 +222,9 @@ export async function POST() {
       },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown error";
+    console.error("Hedy workflow creation failed:", err instanceof Error ? err.message : err);
     return NextResponse.json(
-      { error: `Failed to create n8n workflow: ${msg}` },
+      { error: "Failed to create n8n workflow. Please check your n8n connection and try again." },
       { status: 502 }
     );
   }
