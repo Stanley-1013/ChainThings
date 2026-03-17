@@ -37,25 +37,19 @@ describe("n8n client", () => {
       json: () => Promise.resolve({ id: "wf-1", name: "test", active: false }),
       text: () => Promise.resolve(""),
     });
-    // 2nd call: list tags (for "chainthings")
+    // 2nd call: list all tags (batched — single call)
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve([{ id: "t-1", name: "chainthings" }]),
       text: () => Promise.resolve(""),
     });
-    // 3rd call: list tags (for "tenant:abc")
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve([{ id: "t-1", name: "chainthings" }]),
-      text: () => Promise.resolve(""),
-    });
-    // 4th call: create tag "tenant:abc"
+    // 3rd call: create missing tag "tenant:abc"
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ id: "t-2", name: "tenant:abc" }),
       text: () => Promise.resolve(""),
     });
-    // 5th call: PUT workflow with tags
+    // 4th call: PUT workflow with tags
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ id: "wf-1" }),
@@ -77,10 +71,13 @@ describe("n8n client", () => {
     expect(body.name).toBe("[ChainThings] My Workflow");
     expect(body.tags).toBeUndefined();
 
-    // Verify tags were applied via PUT
-    const putCall = mockFetch.mock.calls[4];
+    // Verify tags were applied via PUT (now 4th call instead of 5th due to batched tag lookup)
+    const putCall = mockFetch.mock.calls[3];
     expect(putCall[0]).toBe("http://localhost:5678/api/v1/workflows/wf-1");
     expect(putCall[1].method).toBe("PUT");
+
+    // Verify reduced call count: create + list tags + create tag + put tags = 4 (was 5)
+    expect(mockFetch).toHaveBeenCalledTimes(4);
 
     expect(result.id).toBe("wf-1");
   });

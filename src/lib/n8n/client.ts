@@ -46,24 +46,41 @@ async function n8nFetch(
   }
 }
 
-async function findOrCreateTag(tagName: string): Promise<N8nTag> {
-  // List existing tags and find by name
+async function resolveTagsBatched(tagNames: string[]): Promise<N8nTag[]> {
+  // Single list call instead of N calls
   const listRes = await n8nFetch("/api/v1/tags");
-  const tags: N8nTag[] = await listRes.json();
-  const existing = tags.find((t) => t.name === tagName);
-  if (existing) return existing;
+  const allTags: N8nTag[] = await listRes.json();
+  const tagMap = new Map(allTags.map((t) => [t.name, t]));
 
-  // Create if not found
-  const createRes = await n8nFetch("/api/v1/tags", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: tagName }),
-  });
-  return createRes.json();
+  const resolved: N8nTag[] = [];
+  const toCreate = tagNames.filter((name) => !tagMap.has(name));
+
+  // Add existing tags
+  for (const name of tagNames) {
+    const existing = tagMap.get(name);
+    if (existing) resolved.push(existing);
+  }
+
+  // Create missing tags in parallel
+  if (toCreate.length > 0) {
+    const created = await Promise.all(
+      toCreate.map(async (name) => {
+        const res = await n8nFetch("/api/v1/tags", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        return res.json() as Promise<N8nTag>;
+      })
+    );
+    resolved.push(...created);
+  }
+
+  return resolved;
 }
 
 async function applyTags(workflowId: string, tagNames: string[]) {
-  const tagObjects = await Promise.all(tagNames.map(findOrCreateTag));
+  const tagObjects = await resolveTagsBatched(tagNames);
   await n8nFetch(`/api/v1/workflows/${workflowId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

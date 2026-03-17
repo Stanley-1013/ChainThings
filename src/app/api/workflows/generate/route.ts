@@ -70,7 +70,8 @@ export async function POST(request: Request) {
     .single();
 
   if (insertError) {
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+    console.error("Workflow insert error:", insertError.message);
+    return NextResponse.json({ error: "Failed to create workflow record" }, { status: 500 });
   }
 
   try {
@@ -144,6 +145,7 @@ export async function POST(request: Request) {
       .update({ status: "error", updated_at: new Date().toISOString() })
       .eq("id", workflowRecord.id);
 
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    console.error("Workflow generation error:", errorMessage);
+    return NextResponse.json({ error: "Workflow generation failed" }, { status: 500 });
   }
 }

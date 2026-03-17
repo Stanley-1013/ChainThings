@@ -139,7 +139,7 @@ describe("POST /api/workflows/generate", () => {
     const body = await getJsonResponse(response);
 
     expect(response.status).toBe(500);
-    expect(body.error).toContain("valid JSON");
+    expect(body.error).toBe("Workflow generation failed");
   });
 
   it("should return 500 when OpenClaw fails", async () => {
@@ -151,6 +151,6 @@ describe("POST /api/workflows/generate", () => {
     const body = await getJsonResponse(response);
 
     expect(response.status).toBe(500);
-    expect(body.error).toBe("Service unavailable");
+    expect(body.error).toBe("Workflow generation failed");
   });
 });
