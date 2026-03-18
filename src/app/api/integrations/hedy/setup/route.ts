@@ -169,14 +169,21 @@ export async function POST() {
     webhookSecret
   );
 
-  // Clean up any orphaned workflows for this tenant to avoid webhook path conflicts
+  // Clean up any orphaned workflows to avoid webhook path conflicts
+  // Match by tags (preferred) OR by webhook path name (fallback for untagged workflows)
+  const hedyWebhookPath = `hedy-${profile.tenant_id}`;
   try {
     const { data: allWorkflows } = await listWorkflows();
     const tenantTag = `tenant:${profile.tenant_id}`;
-    const orphaned = allWorkflows.filter(
-      (wf) => wf.tags?.some((t) => t.name === tenantTag) &&
-              wf.tags?.some((t) => t.name === "chainthings")
-    );
+    const orphaned = allWorkflows.filter((wf) => {
+      // Match by tag
+      const hasTag = wf.tags?.some((t) => t.name === tenantTag) &&
+                     wf.tags?.some((t) => t.name === "chainthings");
+      // Fallback: match by webhook path in workflow name or nodes
+      const hasPath = wf.name.includes(profile.tenant_id.slice(0, 8)) &&
+                      wf.name.toLowerCase().includes("hedy");
+      return hasTag || hasPath;
+    });
     await Promise.allSettled(
       orphaned.map((wf) => deleteWorkflow(wf.id))
     );
