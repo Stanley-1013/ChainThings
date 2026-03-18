@@ -106,7 +106,13 @@ describe("ai-gateway client", () => {
   });
 
   describe("error handling", () => {
-    it("throws on non-ok response with provider name", async () => {
+    it("throws on non-ok response with provider name after retries", async () => {
+      // 500 triggers retry, so mock twice
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve("Server Error"),
+      });
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 500,

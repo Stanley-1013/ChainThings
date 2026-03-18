@@ -95,44 +95,62 @@ export async function chatCompletion(
     });
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      signal: controller.signal,
-    });
+  const MAX_RETRIES = 2;
 
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`${provider} error ${res.status}: ${text}`);
-    }
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: controller.signal,
+      });
 
-    if (config.requestFormat === "zeroclaw") {
-      const data: { response: string; model?: string } = await res.json();
-      return {
-        id: `zc-${Date.now()}`,
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: data.response },
-            finish_reason: "stop",
-          },
-        ],
-      };
-    } else {
-      return res.json();
+      if (!res.ok) {
+        const text = await res.text();
+        // Retry on 500/502/503 (upstream transient errors)
+        if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+          clearTimeout(timer);
+          await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+          continue;
+        }
+        throw new Error(`${provider} error ${res.status}: ${text}`);
+      }
+
+      if (config.requestFormat === "zeroclaw") {
+        const data: { response: string; model?: string } = await res.json();
+        return {
+          id: `zc-${Date.now()}`,
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: data.response },
+              finish_reason: "stop",
+            },
+          ],
+        };
+      } else {
+        return res.json();
+      }
+    } catch (err) {
+      clearTimeout(timer);
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error(
+          `${provider} request timed out after ${config.timeoutMs}ms`
+        );
+      }
+      // Retry on network errors
+      if (attempt < MAX_RETRIES - 1) {
+        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(
-        `${provider} request timed out after ${config.timeoutMs}ms`
-      );
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
   }
+
+  throw new Error(`${provider} failed after ${MAX_RETRIES} attempts`);
 }
