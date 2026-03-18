@@ -55,6 +55,17 @@ function selectHistoryWithinBudget(
   return selected;
 }
 
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant. Always respond in Traditional Chinese (繁體中文) unless the user explicitly writes in another language.
+Do not include any internal tool calls, XML tags, or system markup in your responses.`;
+
+function stripToolCalls(content: string): string {
+  // Remove <tool_call>...</tool_call> blocks that ZeroClaw may include
+  return content
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+    .replace(/<tool_result>[\s\S]*?<\/tool_result>/g, "")
+    .trim();
+}
+
 const N8N_SYSTEM_PROMPT = `You are an n8n workflow assistant. Help the user build n8n workflows through conversation.
 
 When you're ready to generate a workflow, output a JSON code block with this format:
@@ -161,7 +172,10 @@ export async function POST(request: Request) {
     }))
   );
 
-  // Prepend tenant-specific system prompt if configured
+  // Prepend default system prompt (language + behavior)
+  chatMessages.unshift({ role: "system", content: DEFAULT_SYSTEM_PROMPT });
+
+  // Prepend tenant-specific system prompt if configured (takes priority over default)
   const tenantSystemPrompt = aiConfig?.system_prompt as
     | string
     | undefined;
@@ -252,8 +266,9 @@ export async function POST(request: Request) {
       user.id,
       aiOptions
     );
-    const assistantContent =
-      response.choices[0]?.message?.content || "No response";
+    const rawContent = response.choices[0]?.message?.content || "No response";
+    // Strip any internal tool_call/tool_result markup from AI response
+    const assistantContent = stripToolCalls(rawContent);
 
     // Check if response contains an n8n workflow JSON block
     let n8nResult = null;
