@@ -9,12 +9,20 @@ import {
 import { generateHedyWebhookWorkflow } from "@/lib/n8n/templates/hedy-webhook";
 import { NextResponse } from "next/server";
 
-function getWebhookBaseUrl(): string {
-  const url =
+function getWebhookUrl(tenantId: string): string {
+  const webhookPath = `hedy-${tenantId}`;
+  // Prefer routing through the app's single endpoint (n8n-webhook proxy)
+  // so only one public URL is needed. Fall back to direct n8n URL.
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (appUrl && !appUrl.includes("localhost")) {
+    return `${appUrl.replace(/\/+$/, "")}/n8n-webhook/${webhookPath}`;
+  }
+  const n8nUrl = (
     process.env.N8N_WEBHOOK_URL ||
     process.env.N8N_API_URL ||
-    "http://localhost:5678";
-  return url.replace(/\/+$/, "");
+    "http://localhost:5678"
+  ).replace(/\/+$/, "");
+  return `${n8nUrl}/webhook/${webhookPath}`;
 }
 
 // GET: Read-only status check — no side effects
@@ -49,11 +57,11 @@ export async function GET() {
     return NextResponse.json({ data: { configured: false } });
   }
 
-  const n8nUrl = getWebhookBaseUrl();
+  const webhookUrl = getWebhookUrl(profile.tenant_id);
   return NextResponse.json({
     data: {
       configured: true,
-      webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
+      webhookUrl: webhookUrl,
       n8nWorkflowId: integration.config.n8n_workflow_id,
     },
   });
@@ -95,7 +103,7 @@ export async function POST() {
     );
   }
 
-  const n8nUrl = getWebhookBaseUrl();
+  const webhookUrl = getWebhookUrl(profile.tenant_id);
 
   // Check if workflow already exists — verify it's alive in n8n
   if (integration.config?.n8n_workflow_id) {
@@ -121,7 +129,7 @@ export async function POST() {
       if (existing.active) {
         return NextResponse.json({
           data: {
-            webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
+            webhookUrl: webhookUrl,
             n8nWorkflowId: workflowId,
             active: true,
             alreadyExists: true,
@@ -134,7 +142,7 @@ export async function POST() {
         await activateWorkflow(workflowId);
         return NextResponse.json({
           data: {
-            webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
+            webhookUrl: webhookUrl,
             n8nWorkflowId: workflowId,
             active: true,
             reactivated: true,
@@ -215,7 +223,7 @@ export async function POST() {
 
     return NextResponse.json({
       data: {
-        webhookUrl: `${n8nUrl}/webhook/hedy-${profile.tenant_id}`,
+        webhookUrl: webhookUrl,
         n8nWorkflowId: workflow.id,
         active: true,
       },

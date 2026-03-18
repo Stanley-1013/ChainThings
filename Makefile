@@ -31,8 +31,9 @@ DOCKER_ENV_KEYS = \
 
 # ─── Lifecycle ────────────────────────────────────────────────────────────────
 
-# Start everything: sync env → preflight → tunnels → build + run
-up: env-sync preflight tunnel tunnel-app build
+# Start everything: sync env → preflight → tunnel → build + run
+# Only the app tunnel is required — n8n webhooks are proxied through /n8n-webhook/*
+up: env-sync preflight tunnel-app build
 	@$(MAKE) -s status
 
 # Build and start container (without tunnels/preflight — for rebuilds)
