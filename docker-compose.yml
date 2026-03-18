@@ -6,6 +6,7 @@ services:
       args:
         - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3001}/supabase-proxy
         - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - NEXT_PUBLIC_SUPABASE_COOKIE_NAME=${SUPABASE_COOKIE_NAME:-sb-chainthings-auth-token}
     container_name: chainthings-web
     restart: unless-stopped
     ports:
@@ -29,7 +30,8 @@ services:
       - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-}
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3001}
       - CHAINTHINGS_WEBHOOK_SECRET=${CHAINTHINGS_WEBHOOK_SECRET}
-      - SUPABASE_COOKIE_NAME=${SUPABASE_COOKIE_NAME:-sb-localhost-auth-token}
+      - SUPABASE_COOKIE_NAME=${SUPABASE_COOKIE_NAME:-sb-chainthings-auth-token}
+      - NEXT_PUBLIC_SUPABASE_COOKIE_NAME=${SUPABASE_COOKIE_NAME:-sb-chainthings-auth-token}
       - CRON_SECRET=${CRON_SECRET:-}
     networks:
       default:
