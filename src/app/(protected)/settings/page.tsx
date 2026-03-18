@@ -90,7 +90,7 @@ function SettingsContent() {
       </nav>
 
       {/* Mobile: horizontal scrollable tabs */}
-      <nav role="tablist" aria-label="Settings" className="lg:hidden flex gap-1 overflow-x-auto pb-2 -mx-4 px-4 scrollbar-none" onKeyDown={(e) => handleTabKeyDown(e, false)}>
+      <nav role="tablist" aria-label="Settings" className="lg:hidden flex gap-1 overflow-x-auto pb-2 -mx-4 px-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" onKeyDown={(e) => handleTabKeyDown(e, false)}>
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
