@@ -14,7 +14,7 @@ function getWebhookUrl(tenantId: string): string {
   // Prefer routing through the app's single endpoint (n8n-webhook proxy)
   // so only one public URL is needed. Fall back to direct n8n URL.
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (appUrl && !appUrl.includes("localhost")) {
+  if (appUrl && !/localhost|127\.0\.0\.1|^https?:\/\/(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(appUrl)) {
     return `${appUrl.replace(/\/+$/, "")}/n8n-webhook/${webhookPath}`;
   }
   const n8nUrl = (

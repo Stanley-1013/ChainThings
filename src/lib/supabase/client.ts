@@ -10,9 +10,6 @@ export function createClient() {
         name: SUPABASE_COOKIE_NAME,
       },
       global: {
-        headers: {
-          "ngrok-skip-browser-warning": "1",
-        },
         fetch: (url, options = {}) => {
           const headers = new Headers(options.headers);
           headers.set("ngrok-skip-browser-warning", "1");
