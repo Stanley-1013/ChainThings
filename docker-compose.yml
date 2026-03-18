@@ -4,16 +4,15 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3001}/supabase-proxy
         - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-        - NEXT_PUBLIC_SUPABASE_SERVER_URL=http://supabase-kong:8000
     container_name: chainthings-web
     restart: unless-stopped
     ports:
       - "3001:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3001}/supabase-proxy
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
       - SUPABASE_URL=http://supabase-kong:8000
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}

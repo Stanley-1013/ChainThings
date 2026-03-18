@@ -1,10 +1,14 @@
 NGROK ?= ngrok
 NGROK_DOMAIN ?= $(shell grep '^N8N_WEBHOOK_URL=' .env.local 2>/dev/null | sed 's|^N8N_WEBHOOK_URL=https\?://||')
+APP_NGROK_DOMAIN ?= $(shell grep '^NEXT_PUBLIC_APP_URL=' .env.local 2>/dev/null | sed 's|^NEXT_PUBLIC_APP_URL=https\?://||')
+PID_DIR := /tmp/chainthings-pids
+
+# ngrok config files — override in .env.local with NGROK_CFG_APP / NGROK_CFG_N8N
+# Supports multi-account setups where each domain is on a different ngrok account
+NGROK_CFG_APP ?= $(shell grep '^NGROK_CFG_APP=' .env.local 2>/dev/null | cut -d= -f2- || echo "$(HOME)/.config/ngrok/ngrok.yml")
+NGROK_CFG_N8N ?= $(shell grep '^NGROK_CFG_N8N=' .env.local 2>/dev/null | cut -d= -f2- || echo "$(HOME)/.config/ngrok/ngrok.yml")
 
 # Secrets and config that Docker Compose reads from .env
-# NOTE: Do NOT include URLs that docker-compose.yml already hardcodes for
-# container networking (SUPABASE_URL, N8N_API_URL, ZEROCLAW_GATEWAY_URL).
-# Those are set in docker-compose.yml with correct internal hostnames.
 DOCKER_ENV_KEYS = \
 	NEXT_PUBLIC_SUPABASE_URL \
 	NEXT_PUBLIC_SUPABASE_ANON_KEY \
@@ -23,7 +27,30 @@ DOCKER_ENV_KEYS = \
 	CHAINTHINGS_WEBHOOK_SECRET \
 	CRON_SECRET
 
-.PHONY: up down dev tunnel tunnel-stop status env-sync migrate
+.PHONY: up down dev tunnel tunnel-app tunnel-stop status env-sync migrate build
+
+# ─── Lifecycle ────────────────────────────────────────────────────────────────
+
+# Start everything: sync env → preflight → tunnels → build + run
+up: env-sync preflight tunnel tunnel-app build
+	@$(MAKE) -s status
+
+# Build and start container (without tunnels/preflight — for rebuilds)
+build:
+	@echo "▶ Building & starting ChainThings..."
+	@docker compose up -d --build
+
+# Stop everything
+down:
+	@$(MAKE) -s tunnel-stop
+	@echo "⏹ Stopping ChainThings..."
+	@docker compose down
+
+# Dev server (local, not Docker)
+dev:
+	@npx next dev
+
+# ─── Environment ──────────────────────────────────────────────────────────────
 
 # Sync secrets from .env.local → .env for Docker Compose
 env-sync:
@@ -33,8 +60,6 @@ env-sync:
 	fi
 	@echo "# Auto-generated from .env.local for Docker Compose" > .env
 	@echo "# Do not edit — run 'make env-sync' to regenerate" >> .env
-	@echo "# URLs like SUPABASE_URL, N8N_API_URL, ZEROCLAW_GATEWAY_URL are" >> .env
-	@echo "# hardcoded in docker-compose.yml for container networking." >> .env
 	@echo "" >> .env
 	@count=0; for key in $(DOCKER_ENV_KEYS); do \
 		val=$$(grep "^$$key=" .env.local 2>/dev/null | head -1 | cut -d= -f2-); \
@@ -55,13 +80,8 @@ migrate:
 	done
 	@echo "✅ Migrations complete"
 
-# Start everything: sync env + preflight + tunnel + build
-up: env-sync preflight tunnel
-	@echo "▶ Starting ChainThings..."
-	@docker compose up -d --build
-	@$(MAKE) -s status
+# ─── Preflight ────────────────────────────────────────────────────────────────
 
-# Preflight: verify external services on lab_net are reachable
 preflight:
 	@echo "▶ Preflight checks..."
 	@fail=0; \
@@ -94,39 +114,69 @@ preflight:
 		echo ""; echo "  ❌ Required services missing. Start Supabase first."; exit 1; \
 	fi
 
-# Stop everything
-down: tunnel-stop
-	@echo "⏹ Stopping ChainThings..."
-	@docker compose down
+# ─── Tunnels (PID-file managed) ──────────────────────────────────────────────
 
-# Dev server (local, not Docker)
-dev:
-	@npx next dev
-
-# Start ngrok tunnel for n8n webhooks
-tunnel:
-	@if [ -z "$(NGROK_DOMAIN)" ]; then echo "⚠️  N8N_WEBHOOK_URL not set in .env.local, skipping tunnel"; exit 0; fi
-	@if ! command -v $(NGROK) >/dev/null 2>&1; then echo "❌ ngrok not found. Install: https://ngrok.com/download"; exit 1; fi
-	@pkill -f "ngrok http.*5678" 2>/dev/null || true
-	@sleep 1
-	@$(NGROK) http 5678 --url $(NGROK_DOMAIN) --log /tmp/ngrok.log --log-format json &
-	@sleep 3
-	@if curl -s -o /dev/null -w '' https://$(NGROK_DOMAIN)/healthz 2>/dev/null; then \
-		echo "✅ Tunnel: https://$(NGROK_DOMAIN)"; \
+# Helper: start an ngrok tunnel with PID file tracking
+# Usage: $(call start_tunnel,PORT,DOMAIN,LABEL,PID_FILE,CONFIG_FILE)
+define start_tunnel
+	@mkdir -p $(PID_DIR)
+	@if [ -f $(4) ] && kill -0 $$(cat $(4)) 2>/dev/null; then \
+		echo "  $(3): already running (PID $$(cat $(4)))"; \
 	else \
-		echo "⚠️  Tunnel started but health check failed — n8n may not be running"; \
+		rm -f $(4); \
+		setsid nohup $(NGROK) http $(1) --url $(2) \
+			--config $(5) \
+			--log /tmp/ngrok-$(3).log --log-format json \
+			> /dev/null 2>&1 & echo $$! > $(4); \
+		sleep 3; \
+		if kill -0 $$(cat $(4)) 2>/dev/null; then \
+			echo "  ✅ $(3) tunnel: https://$(2) (PID $$(cat $(4)))"; \
+		else \
+			echo "  ❌ $(3) tunnel failed — check /tmp/ngrok-$(3).log"; \
+			rm -f $(4); \
+			exit 0; \
+		fi; \
 	fi
+endef
 
-# Stop ngrok tunnel
+# Helper: stop a tunnel by PID file
+# Usage: $(call stop_tunnel,PID_FILE,LABEL)
+define stop_tunnel
+	@if [ -f $(1) ]; then \
+		pid=$$(cat $(1)); \
+		if kill -0 $$pid 2>/dev/null; then \
+			kill $$pid 2>/dev/null || true; \
+			echo "  ⏹ $(2) tunnel stopped (PID $$pid)"; \
+		fi; \
+		rm -f $(1); \
+	fi
+endef
+
+# n8n webhook tunnel (port 5678)
+tunnel:
+	@if [ -z "$(NGROK_DOMAIN)" ]; then echo "  ⚠️  N8N_WEBHOOK_URL not set, skipping n8n tunnel"; exit 0; fi
+	@if ! command -v $(NGROK) >/dev/null 2>&1; then echo "  ❌ ngrok not found"; exit 1; fi
+	$(call start_tunnel,5678,$(NGROK_DOMAIN),n8n,$(PID_DIR)/ngrok-n8n.pid,$(NGROK_CFG_N8N))
+
+# App tunnel (port 3001)
+tunnel-app:
+	@if [ -z "$(APP_NGROK_DOMAIN)" ] || echo "$(APP_NGROK_DOMAIN)" | grep -qE "^(localhost|172\.|192\.|10\.)"; then \
+		echo "  ⚠️  NEXT_PUBLIC_APP_URL is local, skipping app tunnel"; exit 0; \
+	fi
+	@if ! command -v $(NGROK) >/dev/null 2>&1; then echo "  ❌ ngrok not found"; exit 1; fi
+	$(call start_tunnel,3001,$(APP_NGROK_DOMAIN),app,$(PID_DIR)/ngrok-app.pid,$(NGROK_CFG_APP))
+
+# Stop all tunnels
 tunnel-stop:
-	@pkill -f "ngrok http.*5678" 2>/dev/null || true
-	@echo "⏹ Tunnel stopped"
+	$(call stop_tunnel,$(PID_DIR)/ngrok-n8n.pid,n8n)
+	$(call stop_tunnel,$(PID_DIR)/ngrok-app.pid,app)
 
-# Status overview
+# ─── Status ───────────────────────────────────────────────────────────────────
+
 status:
 	@echo ""
 	@echo "=== ChainThings Status ==="
-	@docker ps --filter "name=chainthings" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+	@docker ps --filter "name=chainthings" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "  (no containers)"
 	@echo ""
 	@echo "--- Services (lab_net) ---"
 	@zc=$$(docker exec chainthings-web wget -q -O- --timeout=3 http://zeroclaw:42617/health 2>/dev/null || true); \
@@ -148,9 +198,19 @@ status:
 		echo "  n8n:       ⚠️  unreachable"; \
 	fi
 	@echo ""
-	@if [ -n "$(NGROK_DOMAIN)" ]; then \
-		echo "ngrok: https://$(NGROK_DOMAIN)"; \
-		curl -s -o /dev/null -w "  n8n tunnel: %{http_code}\n" https://$(NGROK_DOMAIN)/healthz 2>/dev/null || echo "  n8n tunnel: offline"; \
+	@echo "--- Tunnels ---"
+	@if [ -f $(PID_DIR)/ngrok-app.pid ] && kill -0 $$(cat $(PID_DIR)/ngrok-app.pid) 2>/dev/null; then \
+		echo "  app:  ✅ https://$(APP_NGROK_DOMAIN) (PID $$(cat $(PID_DIR)/ngrok-app.pid))"; \
+	elif [ -n "$(APP_NGROK_DOMAIN)" ] && ! echo "$(APP_NGROK_DOMAIN)" | grep -qE "^(localhost|172\.|192\.|10\.)"; then \
+		echo "  app:  ❌ not running"; \
 	else \
-		echo "ngrok: not configured (set N8N_WEBHOOK_URL in .env.local)"; \
+		echo "  app:  local only (http://localhost:3001)"; \
 	fi
+	@if [ -f $(PID_DIR)/ngrok-n8n.pid ] && kill -0 $$(cat $(PID_DIR)/ngrok-n8n.pid) 2>/dev/null; then \
+		echo "  n8n:  ✅ https://$(NGROK_DOMAIN) (PID $$(cat $(PID_DIR)/ngrok-n8n.pid))"; \
+	elif [ -n "$(NGROK_DOMAIN)" ]; then \
+		echo "  n8n:  ❌ not running"; \
+	else \
+		echo "  n8n:  not configured"; \
+	fi
+	@echo ""
