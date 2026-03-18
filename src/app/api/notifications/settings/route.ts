@@ -60,14 +60,24 @@ export async function PUT(request: Request) {
   }
 
   const body = await request.json();
-  const { enabled, frequency, timezone } = body;
+  const { enabled, frequency, timezone, send_hour_local } = body;
 
-  const validFrequencies = ["daily", "biweekly", "weekly"];
+  const validFrequencies = ["daily", "every3days", "weekly", "biweekly"];
   if (frequency && !validFrequencies.includes(frequency)) {
     return NextResponse.json(
       { error: `Invalid frequency. Must be one of: ${validFrequencies.join(", ")}` },
       { status: 400 }
     );
+  }
+
+  if (send_hour_local !== undefined) {
+    const hour = Number(send_hour_local);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+      return NextResponse.json(
+        { error: "send_hour_local must be an integer between 0 and 23" },
+        { status: 400 }
+      );
+    }
   }
 
   if (timezone) {
@@ -87,7 +97,7 @@ export async function PUT(request: Request) {
         enabled: enabled ?? false,
         frequency: frequency ?? "weekly",
         timezone: timezone ?? "Asia/Taipei",
-        send_hour_local: 9,
+        send_hour_local: send_hour_local ?? 9,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "tenant_id,user_id" }

@@ -5,15 +5,21 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Bell, Loader2, Save, Clock } from "lucide-react";
+import { Bell, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const FREQUENCIES = [
   { value: "daily", label: "Daily" },
-  { value: "biweekly", label: "Bi-weekly" },
+  { value: "every3days", label: "Every 3 days" },
   { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Bi-weekly" },
 ] as const;
+
+const HOURS = Array.from({ length: 24 }, (_, i) => ({
+  value: i,
+  label: `${i.toString().padStart(2, "0")}:00`,
+}));
 
 const COMMON_TIMEZONES = [
   "Asia/Taipei",
@@ -67,6 +73,7 @@ export function NotificationSection() {
           enabled: settings.enabled,
           frequency: settings.frequency,
           timezone: settings.timezone,
+          send_hour_local: settings.send_hour_local,
         }),
       });
       const json = await res.json();
@@ -142,14 +149,16 @@ export function NotificationSection() {
 
         {/* Frequency */}
         <div className="space-y-2">
-          <Label>Summary Frequency</Label>
-          <div className="flex gap-2">
+          <Label id="frequency-label">Summary Frequency</Label>
+          <div role="radiogroup" aria-labelledby="frequency-label" className="flex flex-wrap gap-2">
             {FREQUENCIES.map((f) => (
               <button
                 key={f.value}
+                role="radio"
+                aria-checked={settings?.frequency === f.value}
                 onClick={() => update({ frequency: f.value })}
                 className={cn(
-                  "flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                  "flex-1 min-w-[80px] rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
                   settings?.frequency === f.value
                     ? "border-primary bg-primary/10 text-primary"
                     : "border-border hover:bg-muted"
@@ -178,11 +187,24 @@ export function NotificationSection() {
           </select>
         </div>
 
-        {/* Send time info */}
-        <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
-          <Clock className="h-4 w-4 shrink-0" />
-          Summaries are generated daily at {settings?.send_hour_local || 9}:00
-          local time
+        {/* Send time */}
+        <div className="space-y-2">
+          <Label htmlFor="send-hour">Delivery Time</Label>
+          <div className="flex items-center gap-2">
+            <select
+              id="send-hour"
+              value={settings?.send_hour_local ?? 9}
+              onChange={(e) => update({ send_hour_local: Number(e.target.value) })}
+              className="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {HOURS.map((h) => (
+                <option key={h.value} value={h.value}>
+                  {h.label}
+                </option>
+              ))}
+            </select>
+            <span className="text-sm text-muted-foreground">local time</span>
+          </div>
         </div>
 
         <Button onClick={handleSave} disabled={saving || !dirty}>

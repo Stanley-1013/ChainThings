@@ -6,6 +6,7 @@ const ITEM_LIMIT = 8;
 const ITEM_SNIPPET_CHARS = 120;
 const TASK_LIMIT = 8;
 const TASK_SNIPPET_CHARS = 80;
+const MANUAL_COOLDOWN_MS = 60_000; // 1 minute cooldown for manual triggers
 
 function buildBoundedLines(
   lines: string[],
@@ -31,11 +32,168 @@ Return JSON with:
 
 Keep it concise and actionable. Respond ONLY with valid JSON.`;
 
+interface Target {
+  tenant_id: string;
+  user_id: string;
+  timezone: string;
+  frequency: string;
+  send_hour_local: number;
+}
+
+async function getLastWatermark(tenantId: string, userId: string): Promise<string | null> {
+  const { data, error } = await adminDb
+    .from("chainthings_notification_cache")
+    .select("source_watermark")
+    .eq("tenant_id", tenantId)
+    .eq("user_id", userId)
+    .order("source_watermark", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(`Failed to get watermark: ${error.message}`);
+  return data?.[0]?.source_watermark || null;
+}
+
+async function hasNewData(tenantId: string, watermark: string | null): Promise<boolean> {
+  const since = watermark || "1970-01-01T00:00:00Z";
+
+  // Check both created_at AND updated_at to catch edits/updates
+  const { count: newItems, error: itemErr } = await adminDb
+    .from("chainthings_items")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .or(`created_at.gt.${since},updated_at.gt.${since}`);
+
+  if (itemErr) throw new Error(`Failed to check items: ${itemErr.message}`);
+  if (newItems && newItems > 0) return true;
+
+  const { count: newTasks, error: taskErr } = await adminDb
+    .from("chainthings_memory_entries")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .eq("status", "active")
+    .eq("category", "task")
+    .or(`created_at.gt.${since},updated_at.gt.${since}`);
+
+  if (taskErr) throw new Error(`Failed to check tasks: ${taskErr.message}`);
+  return !!(newTasks && newTasks > 0);
+}
+
+async function generateForTarget(target: Target): Promise<boolean> {
+  const watermark = await getLastWatermark(target.tenant_id, target.user_id);
+  const hasNew = await hasNewData(target.tenant_id, watermark);
+
+  if (!hasNew) return false; // No new data — skip AI call
+
+  const periodEnd = new Date();
+  const periodStart = new Date();
+  if (target.frequency === "daily") {
+    periodStart.setDate(periodStart.getDate() - 1);
+  } else if (target.frequency === "biweekly") {
+    periodStart.setDate(periodStart.getDate() - 14);
+  } else if (target.frequency === "every3days") {
+    periodStart.setDate(periodStart.getDate() - 3);
+  } else {
+    periodStart.setDate(periodStart.getDate() - 7);
+  }
+
+  // Fetch full period data for AI context (AI needs complete picture)
+  // The incremental gate is hasNewData() above — we only reach here if there IS new data
+  const { data: recentItems, error: itemErr } = await adminDb
+    .from("chainthings_items")
+    .select("title, content, metadata, created_at, updated_at")
+    .eq("tenant_id", target.tenant_id)
+    .gte("created_at", periodStart.toISOString())
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (itemErr) throw new Error(`Failed to fetch items: ${itemErr.message}`);
+
+  const { data: memories, error: memErr } = await adminDb
+    .from("chainthings_memory_entries")
+    .select("category, content, created_at, updated_at")
+    .eq("tenant_id", target.tenant_id)
+    .eq("status", "active")
+    .eq("category", "task")
+    .order("importance", { ascending: false })
+    .limit(20);
+
+  if (memErr) throw new Error(`Failed to fetch tasks: ${memErr.message}`);
+
+  if (!recentItems?.length && !memories?.length) return false;
+
+  const contextParts: string[] = [];
+  if (recentItems?.length) {
+    contextParts.push("Recent Meeting Notes:");
+    for (const line of buildBoundedLines(
+      recentItems.map((item) => `${item.title}: ${item.content || ""}`),
+      ITEM_LIMIT,
+      ITEM_SNIPPET_CHARS
+    )) {
+      contextParts.push(`- ${line}`);
+    }
+  }
+  if (memories?.length) {
+    contextParts.push("\nPending Tasks:");
+    for (const line of buildBoundedLines(
+      memories.map((m) => m.content),
+      TASK_LIMIT,
+      TASK_SNIPPET_CHARS
+    )) {
+      contextParts.push(`- ${line}`);
+    }
+  }
+
+  const response = await chatCompletion([
+    { role: "system", content: NOTIFICATION_PROMPT },
+    { role: "user", content: contextParts.join("\n") },
+  ]);
+
+  const aiContent = response.choices[0]?.message?.content || "{}";
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(aiContent);
+  } catch {
+    parsed = { summary: aiContent, actionItems: [], reminders: [] };
+  }
+
+  // Watermark = max timestamp from sources actually included in this generation
+  // This prevents race conditions where data inserted during AI call gets skipped
+  const allTimestamps = [
+    ...(recentItems || []).flatMap((i) => [i.created_at, i.updated_at].filter(Boolean)),
+    ...(memories || []).flatMap((m) => [m.created_at, m.updated_at].filter(Boolean)),
+  ];
+  const maxSourceTimestamp = allTimestamps.length > 0
+    ? new Date(Math.max(...allTimestamps.map((t) => new Date(t as string).getTime()))).toISOString()
+    : new Date().toISOString();
+
+  await adminDb.from("chainthings_notification_cache").upsert(
+    {
+      tenant_id: target.tenant_id,
+      user_id: target.user_id,
+      period_start: periodStart.toISOString().split("T")[0],
+      period_end: periodEnd.toISOString().split("T")[0],
+      content: parsed,
+      source_watermark: maxSourceTimestamp,
+      scheduled_for_utc: new Date().toISOString(),
+      status: "generated",
+    },
+    { onConflict: "tenant_id,user_id,period_start,period_end" }
+  );
+
+  await adminDb
+    .from("chainthings_notification_settings")
+    .update({ last_generated_at: new Date().toISOString() })
+    .eq("tenant_id", target.tenant_id)
+    .eq("user_id", target.user_id);
+
+  return true;
+}
+
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  let targetUsers: Array<{ tenant_id: string; user_id: string; timezone: string; frequency: string; send_hour_local: number }> = [];
+  let targetUsers: Target[] = [];
+  let isManual = false;
 
   if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
     // Cron mode: find all users needing notification generation
@@ -57,6 +215,7 @@ export async function POST(request: Request) {
         const lastGen = new Date(s.last_generated_at);
         const hoursSince = (now.getTime() - lastGen.getTime()) / (1000 * 60 * 60);
         if (s.frequency === "daily" && hoursSince < 20) continue;
+        if (s.frequency === "every3days" && hoursSince < 3 * 24 - 4) continue;
         if (s.frequency === "biweekly" && hoursSince < 14 * 24) continue;
         if (s.frequency === "weekly" && hoursSince < 7 * 24) continue;
       }
@@ -71,6 +230,7 @@ export async function POST(request: Request) {
     }
   } else {
     // User mode: generate for the requesting user
+    isManual = true;
     const { createClient } = await import("@/lib/supabase/server");
     const supabase = await createClient();
     const {
@@ -89,7 +249,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Profile not found" }, { status: 404 });
     }
 
-    // Read user's actual notification settings
+    // Cooldown check: prevent manual spam
+    const { data: lastNotif } = await adminDb
+      .from("chainthings_notification_cache")
+      .select("source_watermark")
+      .eq("tenant_id", profile.tenant_id)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (lastNotif?.[0]?.source_watermark) {
+      const lastTime = new Date(lastNotif[0].source_watermark).getTime();
+      if (Date.now() - lastTime < MANUAL_COOLDOWN_MS) {
+        // Check if there's actually new data before enforcing cooldown
+        const hasNew = await hasNewData(profile.tenant_id, lastNotif[0].source_watermark);
+        if (!hasNew) {
+          return NextResponse.json({
+            data: { generated: 0, skipped: true, reason: "no_new_data" },
+          });
+        }
+      }
+    }
+
     const { data: userSettings } = await supabase
       .from("chainthings_notification_settings")
       .select("timezone, frequency, send_hour_local")
@@ -107,97 +288,26 @@ export async function POST(request: Request) {
   }
 
   let generated = 0;
+  let skipped = 0;
 
   for (const target of targetUsers) {
     try {
-      const periodEnd = new Date();
-      const periodStart = new Date();
-      if (target.frequency === "daily") {
-        periodStart.setDate(periodStart.getDate() - 1);
-      } else if (target.frequency === "biweekly") {
-        periodStart.setDate(periodStart.getDate() - 14);
+      const didGenerate = await generateForTarget(target);
+      if (didGenerate) {
+        generated++;
       } else {
-        periodStart.setDate(periodStart.getDate() - 7);
+        skipped++;
       }
-
-      const { data: recentItems } = await adminDb
-        .from("chainthings_items")
-        .select("title, content, metadata")
-        .eq("tenant_id", target.tenant_id)
-        .gte("created_at", periodStart.toISOString())
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      const { data: memories } = await adminDb
-        .from("chainthings_memory_entries")
-        .select("category, content")
-        .eq("tenant_id", target.tenant_id)
-        .eq("status", "active")
-        .eq("category", "task")
-        .order("importance", { ascending: false })
-        .limit(20);
-
-      if (!recentItems?.length && !memories?.length) continue;
-
-      const contextParts: string[] = [];
-      if (recentItems?.length) {
-        contextParts.push("Recent Meeting Notes:");
-        for (const line of buildBoundedLines(
-          recentItems.map((item) => `${item.title}: ${item.content || ""}`),
-          ITEM_LIMIT,
-          ITEM_SNIPPET_CHARS
-        )) {
-          contextParts.push(`- ${line}`);
-        }
-      }
-      if (memories?.length) {
-        contextParts.push("\nPending Tasks:");
-        for (const line of buildBoundedLines(
-          memories.map((m) => m.content),
-          TASK_LIMIT,
-          TASK_SNIPPET_CHARS
-        )) {
-          contextParts.push(`- ${line}`);
-        }
-      }
-
-      const response = await chatCompletion([
-        { role: "system", content: NOTIFICATION_PROMPT },
-        { role: "user", content: contextParts.join("\n") },
-      ]);
-
-      const aiContent = response.choices[0]?.message?.content || "{}";
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(aiContent);
-      } catch {
-        parsed = { summary: aiContent, actionItems: [], reminders: [] };
-      }
-
-      await adminDb.from("chainthings_notification_cache").upsert(
-        {
-          tenant_id: target.tenant_id,
-          user_id: target.user_id,
-          period_start: periodStart.toISOString().split("T")[0],
-          period_end: periodEnd.toISOString().split("T")[0],
-          content: parsed,
-          source_watermark: new Date().toISOString(),
-          scheduled_for_utc: new Date().toISOString(),
-        },
-        { onConflict: "tenant_id,user_id,period_start,period_end" }
-      );
-
-      await adminDb
-        .from("chainthings_notification_settings")
-        .update({ last_generated_at: new Date().toISOString() })
-        .eq("tenant_id", target.tenant_id)
-        .eq("user_id", target.user_id);
-
-      generated++;
     } catch (err) {
       console.error(`Failed to generate notification for ${target.user_id}:`, err);
     }
   }
 
-  return NextResponse.json({ data: { generated } });
+  return NextResponse.json({
+    data: {
+      generated,
+      skipped,
+      ...(isManual && skipped > 0 && { reason: "no_new_data" }),
+    },
+  });
 }

@@ -12,8 +12,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
 
 interface NotificationSettings {
   enabled: boolean;
@@ -39,6 +41,7 @@ export function NotificationPanel() {
   const [notifications, setNotifications] = useState<NotificationCache[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -77,6 +80,32 @@ export function NotificationPanel() {
     }
   }
 
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      const res = await fetch("/api/notifications/generate", { method: "POST" });
+      const json = await res.json();
+
+      if (!res.ok) {
+        toast.error("Failed to refresh notifications");
+        return;
+      }
+
+      if (json.data?.skipped && json.data?.reason === "no_new_data") {
+        toast.info("Already up to date — no new data since last update");
+      } else if (json.data?.generated > 0) {
+        toast.success("Notifications updated");
+        await loadData(); // Reload to show new notification
+      } else {
+        toast.info("No data available to generate notifications");
+      }
+    } catch {
+      toast.error("Failed to refresh notifications");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   if (loading) {
     return (
       <Card>
@@ -99,10 +128,29 @@ export function NotificationPanel() {
           <Bell className="h-5 w-5" />
           Notifications
         </CardTitle>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          {settings?.enabled && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="h-7 text-xs"
+              aria-label="Refresh notifications"
+            >
+              {refreshing ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : (
+                <RefreshCw className="h-3 w-3 mr-1" />
+              )}
+              Update
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
+            role="switch"
+            aria-checked={settings?.enabled}
             onClick={toggleEnabled}
             disabled={toggling}
             className="h-7 text-xs"
@@ -116,8 +164,8 @@ export function NotificationPanel() {
             )}
             {settings?.enabled ? "On" : "Off"}
           </Button>
-          <Link href="/settings">
-            <Button variant="ghost" size="icon" className="h-7 w-7">
+          <Link href="/settings?tab=notifications">
+            <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Notification settings">
               <Settings2 className="h-3.5 w-3.5" />
             </Button>
           </Link>
@@ -134,9 +182,7 @@ export function NotificationPanel() {
           <div className="text-center py-6 text-sm text-muted-foreground">
             <Bell className="h-8 w-8 mx-auto mb-2 opacity-30" />
             <p>No notifications yet.</p>
-            <p className="text-xs mt-1">
-              Next digest: {settings.frequency === "daily" ? "Tomorrow" : "This " + settings.frequency.replace("bi", "")} at 09:00
-            </p>
+            <p className="text-xs mt-1">Click &ldquo;Update&rdquo; to generate your first digest.</p>
           </div>
         ) : (
           <div className="space-y-3">
