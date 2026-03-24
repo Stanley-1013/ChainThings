@@ -1,12 +1,12 @@
 NGROK ?= ngrok
-NGROK_DOMAIN ?= $(shell grep '^N8N_WEBHOOK_URL=' .env.local 2>/dev/null | sed 's|^N8N_WEBHOOK_URL=https\?://||')
-APP_NGROK_DOMAIN ?= $(shell grep '^NEXT_PUBLIC_APP_URL=' .env.local 2>/dev/null | sed 's|^NEXT_PUBLIC_APP_URL=https\?://||')
+NGROK_DOMAIN ?= $(shell grep '^N8N_WEBHOOK_URL=' .env.local 2>/dev/null | sed -E 's|^N8N_WEBHOOK_URL=https?://||')
+APP_NGROK_DOMAIN ?= $(shell grep '^NEXT_PUBLIC_APP_URL=' .env.local 2>/dev/null | sed -E 's|^NEXT_PUBLIC_APP_URL=https?://||')
 PID_DIR := /tmp/chainthings-pids
 
 # ngrok config files — override in .env.local with NGROK_CFG_APP / NGROK_CFG_N8N
 # Supports multi-account setups where each domain is on a different ngrok account
-NGROK_CFG_APP ?= $(shell grep '^NGROK_CFG_APP=' .env.local 2>/dev/null | cut -d= -f2- || echo "$(HOME)/.config/ngrok/ngrok.yml")
-NGROK_CFG_N8N ?= $(shell grep '^NGROK_CFG_N8N=' .env.local 2>/dev/null | cut -d= -f2- || echo "$(HOME)/.config/ngrok/ngrok.yml")
+NGROK_CFG_APP ?= $(shell val=$$(grep '^NGROK_CFG_APP=' .env.local 2>/dev/null | cut -d= -f2-); [ -n "$$val" ] && eval echo "$$val" || echo "$(HOME)/.config/ngrok/ngrok.yml")
+NGROK_CFG_N8N ?= $(shell val=$$(grep '^NGROK_CFG_N8N=' .env.local 2>/dev/null | cut -d= -f2-); [ -n "$$val" ] && eval echo "$$val" || echo "$(HOME)/.config/ngrok/ngrok.yml")
 
 # Secrets and config that Docker Compose reads from .env
 DOCKER_ENV_KEYS = \
@@ -16,16 +16,20 @@ DOCKER_ENV_KEYS = \
 	SUPABASE_COOKIE_NAME \
 	ZEROCLAW_GATEWAY_TOKEN \
 	ZEROCLAW_TIMEOUT_MS \
+	ZEROCLAW_CHAT_TIMEOUT_MS \
+	RAG_TIMEOUT_MS \
 	DEFAULT_AI_PROVIDER \
 	OPENCLAW_GATEWAY_URL \
 	OPENCLAW_GATEWAY_TOKEN \
 	OPENCLAW_TIMEOUT_MS \
 	N8N_API_KEY \
 	N8N_WEBHOOK_URL \
+	N8N_EDITOR_BASE_URL \
 	N8N_TIMEOUT_MS \
 	NEXT_PUBLIC_APP_URL \
 	CHAINTHINGS_WEBHOOK_SECRET \
-	CRON_SECRET
+	CRON_SECRET \
+	AI_MEMORY_EXTRACTION
 
 .PHONY: up down dev tunnel tunnel-app tunnel-stop status env-sync migrate build
 
@@ -125,7 +129,7 @@ define start_tunnel
 		echo "  $(3): already running (PID $$(cat $(4)))"; \
 	else \
 		rm -f $(4); \
-		setsid nohup $(NGROK) http $(1) --url $(2) \
+		nohup $(NGROK) http $(1) --url $(2) \
 			--config $(5) \
 			--log /tmp/ngrok-$(3).log --log-format json \
 			> /dev/null 2>&1 & echo $$! > $(4); \
