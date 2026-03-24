@@ -100,14 +100,9 @@ export default async function DashboardPage() {
               <CardDescription>Workflow automation</CardDescription>
             </CardHeader>
             <CardContent>
-              <a
-                href="http://localhost:5678"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm font-medium text-primary hover:underline"
-              >
-                Open n8n
-              </a>
+              <span className="text-sm font-medium text-muted-foreground">
+                Workflow automation
+              </span>
             </CardContent>
           </Card>
 

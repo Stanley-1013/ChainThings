@@ -1,20 +1,31 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { NextResponse } from "next/server";
-import { createHmac } from "crypto";
+import { triggerEmbedding } from "@/lib/rag/worker";
+import { NextResponse, after } from "next/server";
+import { createHmac, timingSafeEqual } from "crypto";
 
-const WEBHOOK_SECRET = () => process.env.CHAINTHINGS_WEBHOOK_SECRET!;
 const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
+
+async function getTenantWebhookSecret(tenantId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin
+    .from("chainthings_integrations")
+    .select("webhook_secret")
+    .eq("tenant_id", tenantId)
+    .eq("service", "hedy.ai")
+    .single();
+  return data?.webhook_secret ?? null;
+}
 
 function verifySignature(
   tenantId: string,
   timestamp: string,
   signature: string,
-  body: string
+  body: string,
+  secret: string
 ): boolean {
-  const secret = WEBHOOK_SECRET();
   const payload = `${tenantId}:${timestamp}:${body}`;
   const expected = createHmac("sha256", secret).update(payload).digest("hex");
-  return expected === signature;
+  if (expected.length !== signature.length) return false;
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
 export async function POST(
@@ -23,9 +34,15 @@ export async function POST(
 ) {
   const { tenantId } = await params;
 
-  // Support two auth modes:
-  // 1. Shared secret (X-ChainThings-Secret) — used by n8n workflows
-  // 2. HMAC signature (X-ChainThings-Timestamp + X-ChainThings-Signature) — legacy
+  // Per-tenant secret authentication (no global fallback)
+  const tenantSecret = await getTenantWebhookSecret(tenantId);
+  if (!tenantSecret) {
+    return NextResponse.json(
+      { error: "Webhook not configured for this tenant" },
+      { status: 401 }
+    );
+  }
+
   const sharedSecret = request.headers.get("x-chainthings-secret");
   const timestamp = request.headers.get("x-chainthings-timestamp");
   const signature = request.headers.get("x-chainthings-signature");
@@ -33,15 +50,15 @@ export async function POST(
   const rawBody = await request.text();
 
   if (sharedSecret) {
-    // Shared secret auth
-    if (sharedSecret !== WEBHOOK_SECRET()) {
+    const secretMatch = sharedSecret.length === tenantSecret.length &&
+      timingSafeEqual(Buffer.from(sharedSecret), Buffer.from(tenantSecret));
+    if (!secretMatch) {
       return NextResponse.json(
         { error: "Invalid secret" },
         { status: 401 }
       );
     }
   } else if (timestamp && signature) {
-    // HMAC auth with replay protection
     const requestTime = parseInt(timestamp, 10);
     if (
       isNaN(requestTime) ||
@@ -52,7 +69,7 @@ export async function POST(
         { status: 401 }
       );
     }
-    if (!verifySignature(tenantId, timestamp, signature, rawBody)) {
+    if (!verifySignature(tenantId, timestamp, signature, rawBody, tenantSecret)) {
       return NextResponse.json(
         { error: "Invalid signature" },
         { status: 401 }
@@ -109,6 +126,8 @@ export async function POST(
       { status: 500 }
     );
   }
+
+  after(() => triggerEmbedding(tenantId));
 
   return NextResponse.json({ success: true, id: data.id });
 }

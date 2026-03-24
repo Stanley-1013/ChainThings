@@ -98,8 +98,9 @@ export async function chatCompletion(
   const MAX_RETRIES = 2;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const chatTimeout = config.chatTimeoutMs ?? config.timeoutMs;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), chatTimeout);
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -138,7 +139,7 @@ export async function chatCompletion(
       clearTimeout(timer);
       if (err instanceof DOMException && err.name === "AbortError") {
         throw new Error(
-          `${provider} request timed out after ${config.timeoutMs}ms`
+          `${provider} request timed out after ${chatTimeout}ms`
         );
       }
       // Retry on network errors

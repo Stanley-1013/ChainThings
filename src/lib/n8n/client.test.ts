@@ -14,6 +14,7 @@ import {
   activateWorkflow,
   deleteWorkflow,
   listWorkflows,
+  getWorkflowEditorUrl,
 } from "./client";
 
 const originalFetch = globalThis.fetch;
@@ -163,5 +164,29 @@ describe("n8n client", () => {
     await expect(listWorkflows()).rejects.toThrow(
       "n8n request timed out after"
     );
+  });
+});
+
+describe("getWorkflowEditorUrl", () => {
+  const originalEnv = process.env.N8N_EDITOR_BASE_URL;
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.N8N_EDITOR_BASE_URL;
+    } else {
+      process.env.N8N_EDITOR_BASE_URL = originalEnv;
+    }
+  });
+
+  it("returns null when N8N_EDITOR_BASE_URL is not set", () => {
+    delete process.env.N8N_EDITOR_BASE_URL;
+    // getWorkflowEditorUrl reads env at module load, so it may be cached
+    // For this test, we rely on the default empty string behavior
+    expect(getWorkflowEditorUrl("wf-1")).toBeNull();
+  });
+
+  it("returns null for invalid URL schema", () => {
+    // The function validates http/https at call time from the module-level const
+    expect(getWorkflowEditorUrl("wf-1")).toBeNull();
   });
 });

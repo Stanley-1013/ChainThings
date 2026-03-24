@@ -51,5 +51,22 @@ describe("providers", () => {
       );
       process.env.ZEROCLAW_GATEWAY_URL = saved;
     });
+
+    it("includes chatTimeoutMs and embeddingTimeoutMs", () => {
+      const cfg = getProviderConfig("zeroclaw");
+      expect(cfg.chatTimeoutMs).toBeGreaterThanOrEqual(30_000);
+      expect(cfg.embeddingTimeoutMs).toBeGreaterThan(0);
+      expect(cfg.chatTimeoutMs).not.toBe(cfg.embeddingTimeoutMs);
+    });
+
+    it("chatTimeoutMs defaults to at least 60s for zeroclaw", () => {
+      const cfg = getProviderConfig("zeroclaw");
+      expect(cfg.chatTimeoutMs).toBeGreaterThanOrEqual(60_000);
+    });
+
+    it("embeddingTimeoutMs defaults to 10s", () => {
+      const cfg = getProviderConfig("zeroclaw");
+      expect(cfg.embeddingTimeoutMs).toBe(10_000);
+    });
   });
 });

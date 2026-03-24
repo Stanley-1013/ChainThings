@@ -18,6 +18,7 @@ export async function hybridSearch(
     sourceTypes?: string[];
     limit?: number;
     mode?: "hybrid" | "semantic" | "fulltext";
+    signal?: AbortSignal;
   }
 ): Promise<SearchResult[]> {
   const supabase = await createClient();

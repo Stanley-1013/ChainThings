@@ -4,6 +4,11 @@ import { createHmac } from "crypto";
 
 const WEBHOOK_SECRET = "test-webhook-secret";
 
+// Mock triggerEmbedding
+vi.mock("@/lib/rag/worker", () => ({
+  triggerEmbedding: vi.fn(),
+}));
+
 // Mock supabaseAdmin
 const mockFrom = vi.fn();
 vi.mock("@/lib/supabase/admin", () => ({
@@ -52,6 +57,20 @@ function makeParams(tenantId: string) {
 
 function setupMocks(profileExists = true, insertSuccess = true) {
   mockFrom.mockImplementation((table: string) => {
+    if (table === "chainthings_integrations") {
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => ({
+                data: { webhook_secret: WEBHOOK_SECRET },
+                error: null,
+              })),
+            })),
+          })),
+        })),
+      };
+    }
     if (table === "chainthings_profiles") {
       return {
         select: vi.fn(() => ({
@@ -86,6 +105,8 @@ describe("POST /api/webhooks/hedy/[tenantId]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CHAINTHINGS_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    // Default: per-tenant secret exists (needed for all tests since auth check runs first)
+    setupMocks();
   });
 
   it("should return 401 when auth headers are missing", async () => {

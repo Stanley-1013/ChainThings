@@ -54,27 +54,28 @@ async function getLastWatermark(tenantId: string, userId: string): Promise<strin
 
 async function hasNewData(tenantId: string, watermark: string | null): Promise<boolean> {
   const since = watermark || "1970-01-01T00:00:00Z";
+  const threeDaysFromNow = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Check both created_at AND updated_at to catch edits/updates
-  const { count: newItems, error: itemErr } = await adminDb
-    .from("chainthings_items")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", tenantId)
-    .or(`created_at.gt.${since},updated_at.gt.${since}`);
+  const [itemsRes, tasksRes, urgentRes] = await Promise.all([
+    adminDb.from("chainthings_items").select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenantId).or(`created_at.gt.${since},updated_at.gt.${since}`),
+    adminDb.from("chainthings_memory_entries").select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenantId).eq("status", "active").eq("category", "task")
+      .or(`created_at.gt.${since},updated_at.gt.${since}`),
+    adminDb.from("chainthings_memory_entries").select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenantId).eq("status", "active").eq("category", "task")
+      .not("due_date", "is", null).lte("due_date", threeDaysFromNow),
+  ]);
 
-  if (itemErr) throw new Error(`Failed to check items: ${itemErr.message}`);
-  if (newItems && newItems > 0) return true;
+  if (itemsRes.error) throw new Error(`Failed to check items: ${itemsRes.error.message}`);
+  if (tasksRes.error) throw new Error(`Failed to check tasks: ${tasksRes.error.message}`);
+  if (urgentRes.error) throw new Error(`Failed to check urgent tasks: ${urgentRes.error.message}`);
 
-  const { count: newTasks, error: taskErr } = await adminDb
-    .from("chainthings_memory_entries")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", tenantId)
-    .eq("status", "active")
-    .eq("category", "task")
-    .or(`created_at.gt.${since},updated_at.gt.${since}`);
-
-  if (taskErr) throw new Error(`Failed to check tasks: ${taskErr.message}`);
-  return !!(newTasks && newTasks > 0);
+  return !!(
+    (itemsRes.count && itemsRes.count > 0) ||
+    (tasksRes.count && tasksRes.count > 0) ||
+    (urgentRes.count && urgentRes.count > 0)
+  );
 }
 
 async function generateForTarget(target: Target): Promise<boolean> {
@@ -95,30 +96,33 @@ async function generateForTarget(target: Target): Promise<boolean> {
     periodStart.setDate(periodStart.getDate() - 7);
   }
 
-  // Fetch full period data for AI context (AI needs complete picture)
-  // The incremental gate is hasNewData() above — we only reach here if there IS new data
-  const { data: recentItems, error: itemErr } = await adminDb
-    .from("chainthings_items")
-    .select("title, content, metadata, created_at, updated_at")
-    .eq("tenant_id", target.tenant_id)
-    .gte("created_at", periodStart.toISOString())
-    .order("created_at", { ascending: false })
-    .limit(20);
+  // Parallel fetch: items + tasks + upcoming deadlines
+  const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const [itemsRes, memoriesRes, upcomingRes] = await Promise.all([
+    adminDb.from("chainthings_items")
+      .select("title, content, metadata, created_at, updated_at")
+      .eq("tenant_id", target.tenant_id)
+      .gte("created_at", periodStart.toISOString())
+      .order("created_at", { ascending: false }).limit(20),
+    adminDb.from("chainthings_memory_entries")
+      .select("category, content, created_at, updated_at")
+      .eq("tenant_id", target.tenant_id).eq("status", "active").eq("category", "task")
+      .order("importance", { ascending: false }).limit(20),
+    adminDb.from("chainthings_memory_entries")
+      .select("content, due_date")
+      .eq("tenant_id", target.tenant_id).eq("status", "active").eq("category", "task")
+      .not("due_date", "is", null).lte("due_date", sevenDaysFromNow)
+      .order("due_date", { ascending: true }).limit(10),
+  ]);
 
-  if (itemErr) throw new Error(`Failed to fetch items: ${itemErr.message}`);
+  if (itemsRes.error) throw new Error(`Failed to fetch items: ${itemsRes.error.message}`);
+  if (memoriesRes.error) throw new Error(`Failed to fetch tasks: ${memoriesRes.error.message}`);
 
-  const { data: memories, error: memErr } = await adminDb
-    .from("chainthings_memory_entries")
-    .select("category, content, created_at, updated_at")
-    .eq("tenant_id", target.tenant_id)
-    .eq("status", "active")
-    .eq("category", "task")
-    .order("importance", { ascending: false })
-    .limit(20);
+  const recentItems = itemsRes.data;
+  const memories = memoriesRes.data;
+  const upcomingTasks = upcomingRes.data;
 
-  if (memErr) throw new Error(`Failed to fetch tasks: ${memErr.message}`);
-
-  if (!recentItems?.length && !memories?.length) return false;
+  if (!recentItems?.length && !memories?.length && !upcomingTasks?.length) return false;
 
   const contextParts: string[] = [];
   if (recentItems?.length) {
@@ -139,6 +143,15 @@ async function generateForTarget(target: Target): Promise<boolean> {
       TASK_SNIPPET_CHARS
     )) {
       contextParts.push(`- ${line}`);
+    }
+  }
+  if (upcomingTasks?.length) {
+    contextParts.push("\nUpcoming Deadlines (prioritize these):");
+    const now = Date.now();
+    for (const t of upcomingTasks) {
+      const daysLeft = Math.ceil((new Date(t.due_date).getTime() - now) / (24 * 60 * 60 * 1000));
+      const urgency = daysLeft <= 1 ? "⚠️ TODAY/OVERDUE" : daysLeft <= 3 ? "URGENT" : `${daysLeft} days left`;
+      contextParts.push(`- [${urgency}] ${t.content.slice(0, TASK_SNIPPET_CHARS)}`);
     }
   }
 

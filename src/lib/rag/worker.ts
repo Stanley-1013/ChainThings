@@ -2,23 +2,46 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { generateEmbeddings } from "@/lib/ai-gateway/embeddings";
 import { chunkContent } from "./chunker";
 
-const BATCH_SIZE = 10;
+const DEFAULT_BATCH_SIZE = 10;
 const EMBEDDING_BATCH_SIZE = 32;
+const TRIGGER_TIMEOUT_MS = 5000;
 
-export async function processEmbeddingQueue(tenantId?: string): Promise<{
+export async function triggerEmbedding(tenantId: string): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TRIGGER_TIMEOUT_MS);
+  try {
+    await Promise.race([
+      processEmbeddingQueue(tenantId, { maxDocs: 1, signal: controller.signal }),
+      new Promise((_, reject) => {
+        controller.signal.addEventListener("abort", () => reject(new Error("triggerEmbedding timeout")), { once: true });
+      }),
+    ]);
+  } catch {
+    // Embedding failure is non-fatal
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function processEmbeddingQueue(
+  tenantId?: string,
+  options?: { maxDocs?: number; signal?: AbortSignal }
+): Promise<{
   processed: number;
   failed: number;
 }> {
   const supabase = supabaseAdmin;
+  const maxDocs = options?.maxDocs ?? DEFAULT_BATCH_SIZE;
   let processed = 0;
   let failed = 0;
 
-  // Fetch pending documents
+  // Fetch pending and failed documents (failed = retry)
   let query = supabase
     .from("chainthings_rag_documents")
     .select("*")
-    .eq("status", "pending")
-    .limit(BATCH_SIZE);
+    .in("status", ["pending", "failed"])
+    .order("updated_at", { ascending: true })
+    .limit(maxDocs);
 
   if (tenantId) {
     query = query.eq("tenant_id", tenantId);
@@ -34,7 +57,7 @@ export async function processEmbeddingQueue(tenantId?: string): Promise<{
         .from("chainthings_rag_documents")
         .update({ status: "processing", updated_at: new Date().toISOString() })
         .eq("id", doc.id)
-        .eq("status", "pending")
+        .in("status", ["pending", "failed"])
         .select("id")
         .single();
 
@@ -67,7 +90,7 @@ export async function processEmbeddingQueue(tenantId?: string): Promise<{
         const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
         const embeddings = await generateEmbeddings(
           batch.map((c) => c.content),
-          { tenantId: doc.tenant_id }
+          { tenantId: doc.tenant_id, signal: options?.signal }
         );
 
         const rows = batch.map((chunk, idx) => ({

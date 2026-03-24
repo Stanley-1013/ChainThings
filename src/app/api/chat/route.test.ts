@@ -209,7 +209,8 @@ describe("POST /api/chat", () => {
     const body = await getJsonResponse(response);
 
     expect(response.status).toBe(200);
-    expect(body.n8n.status).toBe("pending");
+    expect(body.n8n.status).toBe("error");
+    expect(body.n8n.error).toBe("n8n unavailable");
     expect(body.n8n.n8nWorkflowId).toBeNull();
   });
 

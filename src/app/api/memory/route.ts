@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
-import { NextResponse } from "next/server";
+import { triggerEmbedding } from "@/lib/rag/worker";
+import { NextResponse, after } from "next/server";
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const { category, content, importance } = await request.json();
+  const { category, content, importance, dueDate } = await request.json();
   if (!category || !content) {
     return NextResponse.json(
       { error: "category and content are required" },
@@ -78,6 +79,8 @@ export async function POST(request: Request) {
     );
   }
 
+  const validDueDate = dueDate && !isNaN(new Date(dueDate).getTime()) ? dueDate : null;
+
   const { data, error } = await supabase
     .from("chainthings_memory_entries")
     .insert({
@@ -86,6 +89,7 @@ export async function POST(request: Request) {
       content,
       importance: importance ?? 5,
       source_type: "manual",
+      due_date: validDueDate,
     })
     .select()
     .single();
@@ -93,6 +97,8 @@ export async function POST(request: Request) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  after(() => triggerEmbedding(profile.tenant_id));
 
   return NextResponse.json({ data }, { status: 201 });
 }

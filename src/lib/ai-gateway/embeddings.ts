@@ -9,6 +9,7 @@ export interface EmbeddingOptions {
   token?: string;
   tenantId?: string;
   model?: string;
+  signal?: AbortSignal;
 }
 
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
@@ -37,8 +38,12 @@ export async function generateEmbeddings(
     model: options?.model || DEFAULT_EMBEDDING_MODEL,
   });
 
+  const embeddingTimeout = config.embeddingTimeoutMs ?? config.timeoutMs;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  const timer = setTimeout(() => controller.abort(), embeddingTimeout);
+  if (options?.signal) {
+    options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
   try {
     const res = await fetch(url, {
       method: "POST",

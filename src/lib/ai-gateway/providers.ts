@@ -6,6 +6,8 @@ export interface ProviderConfig {
   defaultToken?: string;
   defaultModel: string;
   timeoutMs: number;
+  chatTimeoutMs: number;
+  embeddingTimeoutMs: number;
   chatEndpoint: string;
   requestFormat: "zeroclaw" | "openai";
   supportsTenantHeader: boolean;
@@ -25,12 +27,15 @@ const configs: Record<AiProvider, () => ProviderConfig | undefined> = {
   zeroclaw: () => {
     const url = env("ZEROCLAW_GATEWAY_URL");
     if (!url) return undefined;
+    const baseTimeout = envTimeout("ZEROCLAW_TIMEOUT_MS", 30_000);
     return {
       name: "zeroclaw",
       baseUrl: url,
       defaultToken: env("ZEROCLAW_GATEWAY_TOKEN"),
       defaultModel: env("ZEROCLAW_MODEL") || "zeroclaw:main",
-      timeoutMs: envTimeout("ZEROCLAW_TIMEOUT_MS", 30_000),
+      timeoutMs: baseTimeout,
+      chatTimeoutMs: envTimeout("ZEROCLAW_CHAT_TIMEOUT_MS", Math.max(baseTimeout, 60_000)),
+      embeddingTimeoutMs: envTimeout("RAG_TIMEOUT_MS", 10_000),
       chatEndpoint: "/webhook",
       requestFormat: "zeroclaw",
       supportsTenantHeader: false,
@@ -39,12 +44,15 @@ const configs: Record<AiProvider, () => ProviderConfig | undefined> = {
   openclaw: () => {
     const url = env("OPENCLAW_GATEWAY_URL");
     if (!url) return undefined;
+    const baseTimeout = envTimeout("OPENCLAW_TIMEOUT_MS", 30_000);
     return {
       name: "openclaw",
       baseUrl: url,
       defaultToken: env("OPENCLAW_GATEWAY_TOKEN"),
       defaultModel: env("OPENCLAW_MODEL") || "openclaw:main",
-      timeoutMs: envTimeout("OPENCLAW_TIMEOUT_MS", 30_000),
+      timeoutMs: baseTimeout,
+      chatTimeoutMs: envTimeout("OPENCLAW_CHAT_TIMEOUT_MS", Math.max(baseTimeout, 60_000)),
+      embeddingTimeoutMs: envTimeout("RAG_TIMEOUT_MS", 10_000),
       chatEndpoint: "/v1/chat/completions",
       requestFormat: "openai",
       supportsTenantHeader: true,

@@ -1,5 +1,11 @@
 import { vi } from "vitest";
 
+// Mock next/server after() — execute callback synchronously in tests
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return { ...actual, after: vi.fn((cb: () => void) => { cb(); }) };
+});
+
 // Set test environment variables
 process.env.NEXT_PUBLIC_SUPABASE_URL = "http://localhost:8000";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "test-anon-key";
@@ -48,6 +54,7 @@ vi.mock("@/lib/n8n/client", () => ({
   activateWorkflow: vi.fn(),
   deleteWorkflow: vi.fn(),
   listWorkflows: vi.fn(),
+  getWorkflowEditorUrl: vi.fn(() => null),
 }));
 
 // Mock @/lib/n8n/validation
@@ -58,4 +65,16 @@ vi.mock("@/lib/n8n/validation", () => ({
 // Mock @/lib/n8n/templates/hedy-webhook
 vi.mock("@/lib/n8n/templates/hedy-webhook", () => ({
   generateHedyWebhookWorkflow: vi.fn(),
+}));
+
+// Mock @/lib/rag/worker
+vi.mock("@/lib/rag/worker", () => ({
+  triggerEmbedding: vi.fn(),
+  processEmbeddingQueue: vi.fn(() => ({ processed: 0, failed: 0 })),
+}));
+
+// Mock @/lib/memory/extractor
+vi.mock("@/lib/memory/extractor", () => ({
+  shouldExtractMemory: vi.fn(() => false),
+  extractAndSaveMemories: vi.fn(),
 }));

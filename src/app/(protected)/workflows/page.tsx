@@ -25,6 +25,7 @@ interface Workflow {
   description: string | null;
   status: string;
   n8n_workflow_id: string | null;
+  error_message: string | null;
   created_at: string;
 }
 
@@ -37,7 +38,7 @@ export default function WorkflowsPage() {
   const loadWorkflows = useCallback(async () => {
     const { data } = await supabase
       .from("chainthings_workflows")
-      .select("id, name, description, status, n8n_workflow_id, created_at")
+      .select("id, name, description, status, n8n_workflow_id, error_message, created_at")
       .order("created_at", { ascending: false })
       .range(0, 49);
 
@@ -147,6 +148,12 @@ export default function WorkflowsPage() {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  {wf.status === "error" && wf.error_message && (
+                    <div className="flex items-start gap-1.5 mb-2 p-2 rounded bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 text-xs">
+                      <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span className="line-clamp-2">{wf.error_message}</span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between mt-2">
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Clock className="h-3.5 w-3.5" />

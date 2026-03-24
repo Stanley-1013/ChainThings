@@ -49,7 +49,9 @@ function createMockDB(): MockDB {
     ],
     conversations: [],
     messages: [],
-    integrations: [],
+    integrations: [
+      { id: "int-hedy", tenant_id: mockProfile.tenant_id, service: "hedy.ai", config: {}, webhook_secret: "test-webhook-secret" },
+    ],
     workflows: [],
     notification_settings: [],
     items: [],
@@ -547,6 +549,20 @@ vi.mock("@/lib/supabase/admin", () => {
   return {
     supabaseAdmin: {
       from: vi.fn((table: string) => {
+        if (table === "chainthings_integrations") {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn(() => ({
+                    data: { webhook_secret: "test-webhook-secret" },
+                    error: null,
+                  })),
+                })),
+              })),
+            })),
+          };
+        }
         if (table === "chainthings_profiles") {
           return {
             select: vi.fn(() => ({

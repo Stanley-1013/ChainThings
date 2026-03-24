@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { chatCompletion, type ChatCompletionOptions } from "@/lib/ai-gateway";
-import { createWorkflow } from "@/lib/n8n/client";
+import { createWorkflow, getWorkflowEditorUrl } from "@/lib/n8n/client";
 import { validateWorkflowNodes } from "@/lib/n8n/validation";
 import { NextResponse } from "next/server";
 
@@ -104,6 +104,7 @@ export async function POST(request: Request) {
 
     // Create workflow in n8n
     let n8nWorkflow = null;
+    let n8nErrorMsg: string | null = null;
     try {
       n8nWorkflow = await createWorkflow(
         workflowData.name || prompt.substring(0, 50),
@@ -111,9 +112,11 @@ export async function POST(request: Request) {
         workflowData.connections || {},
         ["chainthings", `tenant:${profile.tenant_id}`]
       );
-    } catch {
-      // n8n API might not be configured yet — save the data anyway
+    } catch (n8nErr) {
+      n8nErrorMsg = n8nErr instanceof Error ? n8nErr.message : "n8n connection failed";
     }
+
+    const wfStatus = n8nWorkflow ? "active" : n8nErrorMsg ? "error" : "pending";
 
     // Update record
     await supabase
@@ -121,9 +124,10 @@ export async function POST(request: Request) {
       .update({
         name: workflowData.name || prompt.substring(0, 100),
         description: workflowData.description,
-        status: n8nWorkflow ? "active" : "pending",
+        status: wfStatus,
         n8n_workflow_id: n8nWorkflow?.id || null,
         n8n_data: workflowData,
+        error_message: n8nErrorMsg,
         updated_at: new Date().toISOString(),
       })
       .eq("id", workflowRecord.id);
@@ -133,9 +137,11 @@ export async function POST(request: Request) {
         ...workflowRecord,
         name: workflowData.name,
         description: workflowData.description,
-        status: n8nWorkflow ? "active" : "pending",
+        status: wfStatus,
         n8n_workflow_id: n8nWorkflow?.id,
+        editorUrl: n8nWorkflow ? getWorkflowEditorUrl(n8nWorkflow.id) : null,
       },
+      n8nError: n8nErrorMsg,
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "Unknown error";

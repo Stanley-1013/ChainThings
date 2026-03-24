@@ -2,15 +2,19 @@ import { createClient } from "@/lib/supabase/server";
 import { chatCompletion, type ChatCompletionOptions } from "@/lib/ai-gateway";
 import { generateEmbedding } from "@/lib/ai-gateway/embeddings";
 import { hybridSearch } from "@/lib/rag";
-import { createWorkflow } from "@/lib/n8n/client";
+import { createWorkflow, getWorkflowEditorUrl } from "@/lib/n8n/client";
 import { validateWorkflowNodes } from "@/lib/n8n/validation";
-import { NextResponse } from "next/server";
+import { shouldExtractMemory, extractAndSaveMemories } from "@/lib/memory/extractor";
+import { NextResponse, after } from "next/server";
+
+const AI_MEMORY_EXTRACTION = process.env.AI_MEMORY_EXTRACTION !== "false";
 
 // Token budget constants
 const MAX_HISTORY_FETCH = 20;
 const HISTORY_TOKEN_BUDGET = 1200;
 const RAG_TOKEN_BUDGET = 900;
 const MEMORY_TOKEN_BUDGET = 250;
+const DEADLINE_TOKEN_BUDGET = 150;
 const MAX_RAG_RESULTS = 3;
 const MAX_MEMORIES = 4;
 
@@ -114,11 +118,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
+  const tenantId = profile.tenant_id;
+
   // Look up tenant's AI gateway config (zeroclaw preferred, openclaw fallback)
   const { data: aiIntegrations } = await supabase
     .from("chainthings_integrations")
     .select("service, config")
-    .eq("tenant_id", profile.tenant_id)
+    .eq("tenant_id", tenantId)
     .in("service", ["zeroclaw", "openclaw"]);
 
   const zcIntegration = aiIntegrations?.find((i) => i.service === "zeroclaw");
@@ -137,7 +143,7 @@ export async function POST(request: Request) {
     const { data: conv, error: convError } = await supabase
       .from("chainthings_conversations")
       .insert({
-        tenant_id: profile.tenant_id,
+        tenant_id: tenantId,
         title: message.substring(0, 100),
         model: tool === "n8n" ? "n8n-assistant" : null,
       })
@@ -153,7 +159,7 @@ export async function POST(request: Request) {
   // Insert first so the current message is visible in history fetch
   await supabase.from("chainthings_messages").insert({
     conversation_id: convId,
-    tenant_id: profile.tenant_id,
+    tenant_id: tenantId,
     role: "user",
     content: message,
   });
@@ -188,15 +194,19 @@ export async function POST(request: Request) {
     chatMessages.unshift({ role: "system", content: N8N_SYSTEM_PROMPT });
   }
 
-  // RAG: retrieve relevant context for non-tool messages (skip trivial turns)
-  let ragSources: Array<{ id: string; title: string | null; type: string }> = [];
-  if (tool !== "n8n" && shouldRunRag(message)) {
+  // Determine response mode: SSE or JSON
+  const wantSSE = request.headers.get("accept")?.includes("text/event-stream");
+
+  // --- Core logic shared by SSE and JSON modes ---
+
+  async function runRag(): Promise<Array<{ id: string; title: string | null; type: string }>> {
+    if (tool === "n8n" || !shouldRunRag(message)) return [];
     try {
       const searchMode = detectSearchMode(message);
       const queryEmbedding = await generateEmbedding(message, {
         provider: aiOptions.provider,
         token: aiOptions.token,
-        tenantId: profile.tenant_id,
+        tenantId: tenantId,
       });
 
       const results = await hybridSearch(queryEmbedding, message, {
@@ -204,130 +214,229 @@ export async function POST(request: Request) {
         mode: searchMode,
       });
 
-      if (results.length > 0) {
-        ragSources = results.map((r) => ({
-          id: r.documentId,
-          title: r.title,
-          type: r.sourceType,
-        }));
+      if (results.length === 0) return [];
 
-        const contextParts: string[] = ["[Relevant Context]"];
-        let ragBudgetUsed = estimateTokens(contextParts[0]);
+      const sources = results.map((r) => ({
+        id: r.documentId,
+        title: r.title,
+        type: r.sourceType,
+      }));
 
-        for (const result of results) {
-          const label = result.sourceType === "item" ? "Meeting Note" :
-            result.sourceType === "memory" ? "Memory" : "Conversation";
-          const chunk = `[${label}: ${result.title || "Untitled"}]\n${truncateToTokens(result.content, 220)}`;
-          const chunkCost = estimateTokens(chunk);
-          if (ragBudgetUsed + chunkCost > RAG_TOKEN_BUDGET) break;
-          contextParts.push(chunk);
-          ragBudgetUsed += chunkCost;
-        }
+      const contextParts: string[] = ["[Relevant Context]"];
+      let ragBudgetUsed = estimateTokens(contextParts[0]);
 
-        // Only fetch memories if we have RAG budget remaining
-        if (ragBudgetUsed < RAG_TOKEN_BUDGET - 100) {
-          const { data: memories } = await supabase
-            .from("chainthings_memory_entries")
-            .select("category, content")
-            .eq("tenant_id", profile.tenant_id)
-            .eq("status", "active")
-            .order("importance", { ascending: false })
-            .limit(MAX_MEMORIES);
+      for (const result of results) {
+        const label = result.sourceType === "item" ? "Meeting Note" :
+          result.sourceType === "memory" ? "Memory" : "Conversation";
+        const chunk = `[${label}: ${result.title || "Untitled"}]\n${truncateToTokens(result.content, 220)}`;
+        const chunkCost = estimateTokens(chunk);
+        if (ragBudgetUsed + chunkCost > RAG_TOKEN_BUDGET) break;
+        contextParts.push(chunk);
+        ragBudgetUsed += chunkCost;
+      }
 
-          if (memories?.length) {
-            contextParts.push("\n[Assistant Memory]");
-            let memBudget = 0;
-            for (const m of memories) {
-              const line = `- [${m.category}] ${truncateToTokens(m.content, 60)}`;
-              const lineCost = estimateTokens(line);
-              if (memBudget + lineCost > MEMORY_TOKEN_BUDGET) break;
-              contextParts.push(line);
-              memBudget += lineCost;
-            }
-          }
-        }
+      // Parallel fetch: memories + deadlines
+      const threeDays = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      const [memoriesResult, deadlinesResult] = await Promise.all([
+        ragBudgetUsed < RAG_TOKEN_BUDGET - 100
+          ? supabase
+              .from("chainthings_memory_entries")
+              .select("category, content")
+              .eq("tenant_id", tenantId)
+              .eq("status", "active")
+              .order("importance", { ascending: false })
+              .limit(MAX_MEMORIES)
+          : Promise.resolve({ data: null }),
+        supabase
+          .from("chainthings_memory_entries")
+          .select("content, due_date")
+          .eq("tenant_id", tenantId)
+          .eq("status", "active")
+          .eq("category", "task")
+          .not("due_date", "is", null)
+          .lte("due_date", threeDays)
+          .order("due_date", { ascending: true })
+          .limit(5),
+      ]);
 
-        if (contextParts.length > 1) {
-          chatMessages.unshift({
-            role: "system",
-            content: contextParts.join("\n") +
-              "\n\nUse the above context to answer the user's question. Cite sources when referencing specific meeting notes or tasks.",
-          });
+      const memories = memoriesResult.data;
+      if (memories?.length) {
+        contextParts.push("\n[Assistant Memory]");
+        let memBudget = 0;
+        for (const m of memories) {
+          const line = `- [${m.category}] ${truncateToTokens(m.content, 60)}`;
+          const lineCost = estimateTokens(line);
+          if (memBudget + lineCost > MEMORY_TOKEN_BUDGET) break;
+          contextParts.push(line);
+          memBudget += lineCost;
         }
       }
+
+      const deadlines = deadlinesResult.data;
+      if (deadlines?.length) {
+        const now = Date.now();
+        const deadlineLines = ["[Upcoming Deadlines]"];
+        let budget = 0;
+        for (const d of deadlines) {
+          const daysLeft = Math.ceil((new Date(d.due_date).getTime() - now) / (24 * 60 * 60 * 1000));
+          const label = daysLeft <= 0 ? "overdue" : daysLeft === 1 ? "due tomorrow" : `due in ${daysLeft} days`;
+          const line = `- ${d.content} (${label})`;
+          budget += estimateTokens(line);
+          if (budget > DEADLINE_TOKEN_BUDGET) break;
+          deadlineLines.push(line);
+        }
+        if (deadlineLines.length > 1) contextParts.push(deadlineLines.join("\n"));
+      }
+
+      if (contextParts.length > 1) {
+        chatMessages.unshift({
+          role: "system",
+          content: contextParts.join("\n") +
+            "\n\nUse the above context to answer the user's question. Cite sources when referencing specific meeting notes or tasks.",
+        });
+      }
+
+      return sources;
     } catch {
-      // RAG failure is non-fatal; continue without context
+      return [];
     }
   }
 
-  try {
-    const response = await chatCompletion(
-      chatMessages,
-      user.id,
-      aiOptions
-    );
-    const rawContent = response.choices[0]?.message?.content || "No response";
-    // Strip any internal tool_call/tool_result markup from AI response
-    const assistantContent = stripToolCalls(rawContent);
-
-    // Check if response contains an n8n workflow JSON block
-    let n8nResult = null;
+  async function processN8n(assistantContent: string) {
     const workflowMatch = assistantContent.match(
       /```n8n-workflow\s*([\s\S]*?)```/
     );
+    if (!workflowMatch) return null;
 
-    if (workflowMatch) {
+    try {
+      const workflowData = JSON.parse(workflowMatch[1]);
+      const validation = validateWorkflowNodes(workflowData.nodes || []);
+      if (!validation.valid) {
+        return {
+          name: workflowData.name,
+          error: `Disallowed node types: ${validation.disallowed.join(", ")}`,
+          status: "rejected",
+        };
+      }
+
+      let n8nWorkflow = null;
+      let n8nErrorMsg: string | null = null;
       try {
-        const workflowData = JSON.parse(workflowMatch[1]);
+        n8nWorkflow = await createWorkflow(
+          workflowData.name || "Untitled",
+          workflowData.nodes || [],
+          workflowData.connections || {},
+          ["chainthings", `tenant:${tenantId}`]
+        );
+      } catch (n8nErr) {
+        n8nErrorMsg = n8nErr instanceof Error ? n8nErr.message : "n8n connection failed";
+      }
 
-        // Validate node types before creating
-        const validation = validateWorkflowNodes(workflowData.nodes || []);
-        if (!validation.valid) {
-          n8nResult = {
-            name: workflowData.name,
-            error: `Disallowed node types: ${validation.disallowed.join(", ")}`,
-            status: "rejected",
-          };
-        } else {
-          // Try to create in n8n
-          let n8nWorkflow = null;
-          try {
-            n8nWorkflow = await createWorkflow(
-              workflowData.name || "Untitled",
-              workflowData.nodes || [],
-              workflowData.connections || {},
-              ["chainthings", `tenant:${profile.tenant_id}`]
-            );
-          } catch {
-            // n8n API might not be configured
+      const wfStatus = n8nWorkflow ? "active" : n8nErrorMsg ? "error" : "pending";
+
+      await supabase.from("chainthings_workflows").insert({
+        tenant_id: tenantId,
+        name: workflowData.name || message.substring(0, 100),
+        description: workflowData.description,
+        prompt: message,
+        status: wfStatus,
+        n8n_workflow_id: n8nWorkflow?.id || null,
+        n8n_data: workflowData,
+        error_message: n8nErrorMsg,
+      });
+
+      return {
+        name: workflowData.name,
+        n8nWorkflowId: n8nWorkflow?.id || null,
+        status: wfStatus,
+        error: n8nErrorMsg,
+        editorUrl: n8nWorkflow ? getWorkflowEditorUrl(n8nWorkflow.id) : null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // --- SSE mode ---
+  if (wantSSE) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (event: string, data: unknown) => {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        };
+
+        try {
+          // Phase 1: RAG
+          send("status", { phase: "searching" });
+          const ragSources = await runRag();
+          if (ragSources.length > 0) {
+            send("sources", ragSources);
           }
 
-          // Save to workflows table
-          await supabase.from("chainthings_workflows").insert({
-            tenant_id: profile.tenant_id,
-            name: workflowData.name || message.substring(0, 100),
-            description: workflowData.description,
-            prompt: message,
-            status: n8nWorkflow ? "active" : "pending",
-            n8n_workflow_id: n8nWorkflow?.id || null,
-            n8n_data: workflowData,
+          // Phase 2: AI completion
+          send("status", { phase: "thinking" });
+          const response = await chatCompletion(chatMessages, user.id, aiOptions);
+          const rawContent = response.choices[0]?.message?.content || "No response";
+          const assistantContent = stripToolCalls(rawContent);
+
+          // Persist BEFORE pushing delta (data consistency)
+          const n8nResult = await processN8n(assistantContent);
+
+          await supabase.from("chainthings_messages").insert({
+            conversation_id: convId,
+            tenant_id: tenantId,
+            role: "assistant",
+            content: assistantContent,
+            metadata: {
+              usage: response.usage,
+              ...(n8nResult && { n8n: n8nResult }),
+            },
           });
 
-          n8nResult = {
-            name: workflowData.name,
-            n8nWorkflowId: n8nWorkflow?.id || null,
-            status: n8nWorkflow ? "active" : "pending",
-          };
-        }
-      } catch {
-        // JSON parse failed — just show the message as-is
-      }
-    }
+          // Push events
+          send("delta", { content: assistantContent });
+          if (n8nResult) send("n8n", n8nResult);
 
-    // Save assistant message
+          // Memory extraction (deferred via after() — doesn't block SSE done)
+          if (AI_MEMORY_EXTRACTION && shouldExtractMemory(message, tool)) {
+            after(async () => {
+              try { await extractAndSaveMemories(message, assistantContent, tenantId, aiOptions); } catch { /* non-fatal */ }
+            });
+          }
+
+          send("done", { conversationId: convId });
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : "Unknown error";
+          send("error", { message: errorMessage });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  // --- JSON mode (backward compatible) ---
+  try {
+    const ragSources = await runRag();
+
+    const response = await chatCompletion(chatMessages, user.id, aiOptions);
+    const rawContent = response.choices[0]?.message?.content || "No response";
+    const assistantContent = stripToolCalls(rawContent);
+
+    const n8nResult = await processN8n(assistantContent);
+
     await supabase.from("chainthings_messages").insert({
       conversation_id: convId,
-      tenant_id: profile.tenant_id,
+      tenant_id: tenantId,
       role: "assistant",
       content: assistantContent,
       metadata: {
@@ -335,6 +444,13 @@ export async function POST(request: Request) {
         ...(n8nResult && { n8n: n8nResult }),
       },
     });
+
+    // Memory extraction (deferred — doesn't block JSON response)
+    if (AI_MEMORY_EXTRACTION && shouldExtractMemory(message, tool)) {
+      after(async () => {
+        try { await extractAndSaveMemories(message, assistantContent, tenantId, aiOptions); } catch { /* non-fatal */ }
+      });
+    }
 
     return NextResponse.json({
       conversationId: convId,

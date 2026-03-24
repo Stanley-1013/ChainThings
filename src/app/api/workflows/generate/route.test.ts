@@ -117,7 +117,7 @@ describe("POST /api/workflows/generate", () => {
     expect(body.workflow.n8n_workflow_id).toBe("wf-1");
   });
 
-  it("should save as pending when n8n is unavailable", async () => {
+  it("should save as error when n8n is unavailable", async () => {
     setupClient();
     mockChatCompletion.mockResolvedValue(mockJsonWorkflowResponse("Email Summary"));
     mockCreateWorkflow.mockRejectedValue(new Error("n8n unavailable"));
@@ -127,7 +127,8 @@ describe("POST /api/workflows/generate", () => {
     const body = await getJsonResponse(response);
 
     expect(response.status).toBe(200);
-    expect(body.workflow.status).toBe("pending");
+    expect(body.workflow.status).toBe("error");
+    expect(body.n8nError).toBe("n8n unavailable");
   });
 
   it("should return 500 when AI returns no JSON", async () => {

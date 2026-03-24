@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { Copy, Check, Zap } from "lucide-react";
-import { useState } from "react";
+import { useState, memo, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -73,20 +73,15 @@ interface MarkdownRendererProps {
   className?: string;
 }
 
-export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
-  // Pre-process: extract n8n-workflow blocks and replace with placeholders
-  const n8nBlocks: string[] = [];
-  const processed = content.replace(
-    /```n8n-workflow[\s\S]*?```/g,
-    () => {
-      const idx = n8nBlocks.length;
-      n8nBlocks.push("n8n");
-      return `\n<!--n8n-block-${idx}-->\n`;
-    }
-  );
-
-  // Split on n8n placeholders
-  const segments = processed.split(/(<!--n8n-block-\d+-->)/);
+export const MarkdownRenderer = memo(function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+  const { processed, segments } = useMemo(() => {
+    const blocks: string[] = [];
+    const p = content.replace(
+      /```n8n-workflow[\s\S]*?```/g,
+      () => { blocks.push("n8n"); return `\n<!--n8n-block-${blocks.length - 1}-->\n`; }
+    );
+    return { processed: p, segments: p.split(/(<!--n8n-block-\d+-->)/) };
+  }, [content]);
 
   return (
     <div className={cn("space-y-0", className)}>
@@ -163,4 +158,4 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
       })}
     </div>
   );
-}
+});

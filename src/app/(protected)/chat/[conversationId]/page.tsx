@@ -14,8 +14,13 @@ import {
   ExternalLink,
   Loader2,
   PanelLeft,
+  AlertCircle,
+  Clock,
+  Search,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { streamChat } from "@/lib/chat/stream-client";
 import { Badge } from "@/components/ui/badge";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
 
@@ -42,14 +47,41 @@ interface N8nResult {
   name: string;
   n8nWorkflowId: string | null;
   status: string;
+  error?: string | null;
+  editorUrl?: string | null;
 }
 
-function LoadingDots() {
+function StreamingStatus({
+  phase,
+}: {
+  phase: "connecting" | "searching" | "thinking" | "streaming" | null;
+}) {
+  if (!phase || phase === "streaming") return null;
+
+  const labels: Record<string, string> = {
+    connecting: "連線中...",
+    searching: "正在搜索相關資料...",
+    thinking: "正在思考...",
+  };
+
   return (
-    <div className="flex space-x-1 items-center h-6">
-      <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:-0.3s]" />
-      <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:-0.15s]" />
-      <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce" />
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-2 h-6 text-sm text-muted-foreground"
+    >
+      {phase === "connecting" ? (
+        <div className="flex space-x-1 items-center">
+          <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:-0.3s]" />
+          <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:-0.15s]" />
+          <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce" />
+        </div>
+      ) : phase === "searching" ? (
+        <Search className="h-3.5 w-3.5 animate-pulse" />
+      ) : (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      )}
+      <span>{labels[phase]}</span>
     </div>
   );
 }
@@ -70,8 +102,17 @@ export default function ConversationPage() {
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [streamingPhase, setStreamingPhase] = useState<
+    "connecting" | "searching" | "thinking" | "streaming" | null
+  >(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const supabaseRef = useRef(createClient());
+  const streamingContentRef = useRef("");
+  const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrollTime = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!isNew && conversationId) {
@@ -82,11 +123,33 @@ export default function ConversationPage() {
       setMessages([]);
       setN8nResults([]);
     }
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, [conversationId]);
 
   useEffect(() => {
+    if (isAtBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, loading, isAtBottom]);
+
+  const handleScroll = useCallback(() => {
+    const now = Date.now();
+    if (now - lastScrollTime.current < 100) return;
+    lastScrollTime.current = now;
+    const el = scrollAreaRef.current;
+    if (!el) return;
+    const viewport = el.querySelector('[data-slot="scroll-area-viewport"]');
+    const target = viewport || el;
+    const distFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    setIsAtBottom(distFromBottom < 100);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+    setIsAtBottom(true);
+  }, []);
 
   const loadMessages = useCallback(async () => {
     const { data } = await supabaseRef.current
@@ -104,73 +167,98 @@ export default function ConversationPage() {
     const userMessage = input.trim();
     setInput("");
     setLoading(true);
+    setStreamingPhase("connecting");
+    streamingContentRef.current = "";
 
-    const tempId = crypto.randomUUID();
+    // Cancel any previous pending request
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+
+    const assistantMsgId = crypto.randomUUID();
     setMessages((prev) => [
       ...prev,
       {
-        id: tempId,
+        id: crypto.randomUUID(),
         role: "user",
         content: userMessage,
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: assistantMsgId,
+        role: "assistant",
+        content: "",
         created_at: new Date().toISOString(),
       },
     ]);
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      await streamChat(
+        "/api/chat",
+        {
           message: userMessage,
           conversationId: currentConvId,
           tool: activeTool,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to send message");
-
-      if (!currentConvId && data.conversationId) {
-        setCurrentConvId(data.conversationId);
-        router.replace(`/chat/${data.conversationId}`);
-      }
-
-      if (data.n8n) {
-        setN8nResults((prev) => [...prev, data.n8n]);
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: data.message,
-          created_at: new Date().toISOString(),
-          sources: data.sources,
         },
-      ]);
+        {
+          onStatus: (phase) => setStreamingPhase(phase),
+          onSources: (sources) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId ? { ...m, sources } : m
+              )
+            );
+          },
+          onDelta: (content) => {
+            setStreamingPhase("streaming");
+            streamingContentRef.current += content;
+            if (!updateTimerRef.current) {
+              updateTimerRef.current = setTimeout(() => {
+                const snap = streamingContentRef.current;
+                setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: snap } : m));
+                updateTimerRef.current = null;
+              }, 60);
+            }
+          },
+          onN8n: (result) => setN8nResults((prev) => [...prev, result]),
+          onDone: (data) => {
+            if (updateTimerRef.current) { clearTimeout(updateTimerRef.current); updateTimerRef.current = null; }
+            const final1 = streamingContentRef.current;
+            if (final1) setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: final1 } : m));
+            if (!currentConvId && data.conversationId) {
+              setCurrentConvId(data.conversationId);
+              router.replace(`/chat/${data.conversationId}`);
+            }
+          },
+          onError: (errorMsg) => {
+            setStreamingPhase(null);
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId ? { ...m, content: `Error: ${errorMsg}` } : m
+              )
+            );
+          },
+        },
+        abortControllerRef.current.signal
+      );
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       const errorMsg =
         err instanceof Error ? err.message : "Error sending message";
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `Error: ${errorMsg}`,
-          created_at: new Date().toISOString(),
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId ? { ...m, content: `Error: ${errorMsg}` } : m
+        )
+      );
     } finally {
       setLoading(false);
+      setStreamingPhase(null);
     }
   }
 
-  const handleRegenerate = () => {
-    const lastUserMsg = [...messages]
-      .reverse()
-      .find((m) => m.role === "user");
+  const handleRegenerate = async () => {
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUserMsg) return;
+    streamingContentRef.current = "";
 
     // Remove last assistant message
     setMessages((prev) => {
@@ -179,47 +267,84 @@ export default function ConversationPage() {
       return prev.filter((_, i) => i !== idx);
     });
 
-    setInput(lastUserMsg.content);
-    setTimeout(() => {
-      setInput("");
-      setLoading(true);
+    const assistantMsgId = crypto.randomUUID();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantMsgId,
+        role: "assistant",
+        content: "",
+        created_at: new Date().toISOString(),
+      },
+    ]);
 
-      fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+    setLoading(true);
+    setStreamingPhase("connecting");
+
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+
+    try {
+      await streamChat(
+        "/api/chat",
+        {
           message: lastUserMsg.content,
           conversationId: currentConvId,
           tool: activeTool,
-        }),
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.n8n) setN8nResults((prev) => [...prev, data.n8n]);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: data.message || data.error || "No response",
-              created_at: new Date().toISOString(),
-              sources: data.sources,
-            },
-          ]);
-        })
-        .catch(() => {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: "Error: Failed to regenerate response",
-              created_at: new Date().toISOString(),
-            },
-          ]);
-        })
-        .finally(() => setLoading(false));
-    }, 0);
+        },
+        {
+          onStatus: (phase) => setStreamingPhase(phase),
+          onSources: (sources) => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantMsgId ? { ...m, sources } : m))
+            );
+          },
+          onDelta: (content) => {
+            setStreamingPhase("streaming");
+            streamingContentRef.current += content;
+            if (!updateTimerRef.current) {
+              updateTimerRef.current = setTimeout(() => {
+                const snap = streamingContentRef.current;
+                setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: snap } : m));
+                updateTimerRef.current = null;
+              }, 60);
+            }
+          },
+          onN8n: (result) => setN8nResults((prev) => [...prev, result]),
+          onDone: (data) => {
+            if (updateTimerRef.current) { clearTimeout(updateTimerRef.current); updateTimerRef.current = null; }
+            const final2 = streamingContentRef.current;
+            if (final2) setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: final2 } : m));
+            if (!currentConvId && data.conversationId) {
+              setCurrentConvId(data.conversationId);
+            }
+          },
+          onError: (errorMsg) => {
+            setStreamingPhase(null);
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, content: `Error: ${errorMsg}` }
+                  : m
+              )
+            );
+          },
+        },
+        abortControllerRef.current.signal
+      );
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      const errorMsg =
+        err instanceof Error ? err.message : "Error regenerating response";
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId ? { ...m, content: `Error: ${errorMsg}` } : m
+        )
+      );
+    } finally {
+      setLoading(false);
+      setStreamingPhase(null);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -286,34 +411,63 @@ export default function ConversationPage() {
 
           {n8nResults.length > 0 && (
             <div className="flex flex-wrap gap-1.5 ml-auto">
-              {n8nResults.map((r, i) => (
-                <Badge
-                  key={i}
-                  variant="secondary"
-                  className="pl-1 pr-2 py-0.5 flex items-center gap-1 bg-green-50 dark:bg-green-950 text-green-800 dark:text-green-200 border-green-100 dark:border-green-800 text-xs"
-                >
-                  <div className="p-0.5 bg-green-200 dark:bg-green-800 rounded-full">
-                    <Zap className="h-2.5 w-2.5 text-green-700 dark:text-green-300" />
-                  </div>
-                  <span className="max-w-[120px] truncate">{r.name}</span>
-                  {r.n8nWorkflowId && (
-                    <a
-                      href={`http://localhost:5678/workflow/${r.n8nWorkflowId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-0.5 hover:text-primary"
-                    >
-                      <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
-                  )}
-                </Badge>
-              ))}
+              {n8nResults.map((r, i) => {
+                const isError = r.status === "error";
+                const isPending = r.status === "pending";
+                const badgeClass = isError
+                  ? "bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 border-red-100 dark:border-red-800"
+                  : isPending
+                  ? "bg-yellow-50 dark:bg-yellow-950 text-yellow-800 dark:text-yellow-200 border-yellow-100 dark:border-yellow-800"
+                  : "bg-green-50 dark:bg-green-950 text-green-800 dark:text-green-200 border-green-100 dark:border-green-800";
+                const iconBgClass = isError
+                  ? "bg-red-200 dark:bg-red-800"
+                  : isPending
+                  ? "bg-yellow-200 dark:bg-yellow-800"
+                  : "bg-green-200 dark:bg-green-800";
+                const iconColorClass = isError
+                  ? "text-red-700 dark:text-red-300"
+                  : isPending
+                  ? "text-yellow-700 dark:text-yellow-300"
+                  : "text-green-700 dark:text-green-300";
+
+                return (
+                  <Badge
+                    key={i}
+                    variant="secondary"
+                    className={`pl-1 pr-2 py-0.5 flex items-center gap-1 text-xs ${badgeClass}`}
+                    title={isError ? r.error || "建立失敗" : isPending ? "n8n 未連接" : r.name}
+                  >
+                    <div className={`p-0.5 ${iconBgClass} rounded-full`}>
+                      {isError ? (
+                        <AlertCircle className={`h-2.5 w-2.5 ${iconColorClass}`} />
+                      ) : isPending ? (
+                        <Clock className={`h-2.5 w-2.5 ${iconColorClass}`} />
+                      ) : (
+                        <Zap className={`h-2.5 w-2.5 ${iconColorClass}`} />
+                      )}
+                    </div>
+                    <span className="max-w-[120px] truncate">
+                      {isError ? "建立失敗" : isPending ? "n8n 未連接" : r.name}
+                    </span>
+                    {r.editorUrl && (
+                      <a
+                        href={r.editorUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-0.5 hover:text-primary"
+                      >
+                        <ExternalLink className="h-2.5 w-2.5" />
+                      </a>
+                    )}
+                  </Badge>
+                );
+              })}
             </div>
           )}
         </div>
 
         {/* Messages */}
-        <ScrollArea className="flex-1 mb-2">
+        <ScrollArea className="flex-1 mb-2 relative" ref={scrollAreaRef} onScrollCapture={handleScroll}>
           <div className="space-y-6 py-4 max-w-3xl mx-auto">
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center pt-20 text-center opacity-40">
@@ -395,19 +549,33 @@ export default function ConversationPage() {
               </div>
             ))}
 
-            {loading && (
+            {loading && streamingPhase && streamingPhase !== "streaming" && (
               <div className="flex items-start gap-3">
                 <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 bg-muted border">
                   <Bot className="h-4 w-4" />
                 </div>
                 <div className="bg-muted rounded-2xl rounded-tl-none px-4 py-2.5 shadow-sm min-w-[80px]">
-                  <LoadingDots />
+                  <StreamingStatus phase={streamingPhase} />
                 </div>
               </div>
             )}
             <div ref={messagesEndRef} />
           </div>
         </ScrollArea>
+
+        {!isAtBottom && (
+          <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10">
+            <Button
+              variant="secondary"
+              size="sm"
+              className="rounded-full shadow-lg gap-1"
+              onClick={scrollToBottom}
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+              回到底部
+            </Button>
+          </div>
+        )}
 
         {/* Input */}
         <div className="pt-2 pb-2 border-t bg-background">

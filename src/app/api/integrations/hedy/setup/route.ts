@@ -158,15 +158,25 @@ export async function POST() {
     }
   }
 
-  // Generate and create workflow — POST to our own API instead of direct Supabase
+  // Generate per-tenant webhook secret
+  const { randomUUID } = await import("crypto");
+  const tenantWebhookSecret = randomUUID();
+  await supabase
+    .from("chainthings_integrations")
+    .update({
+      webhook_secret: tenantWebhookSecret,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", integration.id);
+
+  // Generate and create workflow
   const appBaseUrl =
     process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001";
-  const webhookSecret = process.env.CHAINTHINGS_WEBHOOK_SECRET!;
 
   const template = generateHedyWebhookWorkflow(
     profile.tenant_id,
     appBaseUrl,
-    webhookSecret
+    tenantWebhookSecret
   );
 
   // Clean up any orphaned workflows to avoid webhook path conflicts

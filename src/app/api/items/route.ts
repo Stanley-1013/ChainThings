@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
-import { NextResponse } from "next/server";
+import { triggerEmbedding } from "@/lib/rag/worker";
+import { NextResponse, after } from "next/server";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -39,6 +40,8 @@ export async function POST(request: Request) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  after(() => triggerEmbedding(profile.tenant_id));
 
   return NextResponse.json({ data }, { status: 201 });
 }

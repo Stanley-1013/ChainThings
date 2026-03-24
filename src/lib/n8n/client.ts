@@ -139,3 +139,11 @@ export async function listWorkflows(): Promise<{ data: N8nWorkflow[] }> {
   const res = await n8nFetch("/api/v1/workflows");
   return res.json();
 }
+
+const N8N_EDITOR_BASE_URL = process.env.N8N_EDITOR_BASE_URL || "";
+
+export function getWorkflowEditorUrl(workflowId: string): string | null {
+  if (!N8N_EDITOR_BASE_URL) return null;
+  if (!/^https?:\/\//.test(N8N_EDITOR_BASE_URL)) return null;
+  return `${N8N_EDITOR_BASE_URL.replace(/\/+$/, "")}/workflow/${workflowId}`;
+}
