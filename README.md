@@ -13,12 +13,14 @@ Multi-tenant platform integrating Supabase (with pgvector), AI gateway (ZeroClaw
 
 ## Features
 
-- **AI Chat with RAG** — Retrieval-augmented generation: chat queries automatically search meeting notes, tasks, and assistant memory for relevant context
-- **Meeting Notes** — Create notes manually (text/file upload) or auto-capture from Hedy.ai; AI extracts key points and action items
-- **Assistant Memory** — Per-tenant persistent memory (tasks, preferences, facts) that the AI references across conversations
-- **Notification Digests** — AI-generated summaries of pending tasks and recent meetings, cached to reduce token costs; configurable frequency (daily/biweekly/weekly) at user's local 09:00
-- **Workflow Generation** — Describe a workflow in natural language, AI generates and deploys it to n8n
-- **Multi-tenant Isolation** — Every table uses `tenant_id` + RLS; RAG search uses `SECURITY INVOKER` with auth-derived tenant context
+- **AI Chat with SSE Streaming** — Server-Sent Events with phased status feedback (searching → thinking → streaming); separate timeouts for chat (60s) and RAG (10s)
+- **RAG Retrieval** — Chat queries automatically search meeting notes, tasks, and assistant memory; upcoming deadlines injected into context
+- **Auto Memory Extraction** — AI analyzes conversations to extract tasks, facts, and preferences; stores with dedup to assistant memory; supports `due_date` for task deadlines
+- **Meeting Notes** — Create notes manually (text/file upload) or auto-capture from Hedy.ai; AI extracts key points and action items; auto-triggers RAG embedding
+- **Assistant Memory** — Per-tenant persistent memory with automatic embedding; AI references across conversations and notifications
+- **Notification Digests** — AI-generated summaries with upcoming deadline alerts; cached to reduce token costs; configurable frequency (daily/biweekly/weekly) at user's local 09:00
+- **Workflow Generation** — Describe a workflow in natural language, AI generates and deploys it to n8n; transparent error display when n8n is unavailable
+- **Multi-tenant Isolation** — Every table uses `tenant_id` + RLS; RAG search uses `SECURITY INVOKER`; per-tenant webhook HMAC secrets; timing-safe comparisons
 
 ## Quick Start
 
@@ -85,12 +87,16 @@ done
 | `OPENCLAW_GATEWAY_TOKEN` | No | OpenClaw auth token (legacy) |
 | `N8N_API_URL` | Yes | n8n API URL |
 | `N8N_API_KEY` | Yes | n8n API key |
-| `CHAINTHINGS_WEBHOOK_SECRET` | Yes | HMAC secret for webhook authentication |
+| `CHAINTHINGS_WEBHOOK_SECRET` | Yes | HMAC secret for webhook auth (legacy; new tenants use per-tenant secrets) |
 | `CRON_SECRET` | No | Secret for internal cron-triggered notification generation |
 | `NEXT_PUBLIC_APP_URL` | No | App public URL (default: `http://localhost:3001`) |
-| `N8N_WEBHOOK_URL` | No | Public n8n webhook URL (e.g., `https://n8n.yourdomain.com`) |
+| `N8N_WEBHOOK_URL` | No | Public n8n webhook URL; also used as editor link fallback |
+| `N8N_EDITOR_BASE_URL` | No | Override n8n editor URL if different from webhook URL |
 | `N8N_TIMEOUT_MS` | No | n8n request timeout in ms (default: `10000`) |
-| `ZEROCLAW_TIMEOUT_MS` | No | ZeroClaw request timeout in ms (default: `30000`) |
+| `ZEROCLAW_TIMEOUT_MS` | No | ZeroClaw base timeout in ms (default: `30000`) |
+| `ZEROCLAW_CHAT_TIMEOUT_MS` | No | AI chat request timeout (default: `60000`, falls back to `ZEROCLAW_TIMEOUT_MS`) |
+| `RAG_TIMEOUT_MS` | No | RAG stage timeout — embedding + search + memory (default: `10000`) |
+| `AI_MEMORY_EXTRACTION` | No | Enable auto memory extraction from chat (default: `true`) |
 | `OPENCLAW_TIMEOUT_MS` | No | OpenClaw request timeout in ms (default: `30000`) |
 | `SUPABASE_COOKIE_NAME` | No | Auth cookie name (default: `sb-localhost-auth-token`) |
 
@@ -102,14 +108,14 @@ src/
     (auth)/                  # Login, register, OAuth callback
     (protected)/
       dashboard/             # Stats + notification panel
-      chat/                  # AI chat with RAG context injection
+      chat/                  # AI chat with SSE streaming + RAG context
       files/                 # File management
       workflows/             # Workflow management
       items/                 # Meeting notes list
       items/new/             # Create meeting notes (text/upload)
       settings/              # Integrations + AI & memory config
     api/
-      chat/                  # AI chat with RAG retrieval + n8n tool mode
+      chat/                  # AI chat (SSE + JSON) with RAG + n8n tool mode + memory extraction
       files/upload/          # File upload to Supabase Storage
       workflows/generate/    # AI-generated n8n workflows
       integrations/          # Integration CRUD + Hedy webhook setup
@@ -124,17 +130,19 @@ src/
       webhooks/hedy/         # HMAC-authenticated webhook receiver
       auth/signout/          # Sign out
   lib/
-    ai-gateway/              # Provider-agnostic AI client (chat + embeddings)
-    rag/                     # RAG pipeline (chunker, search, worker)
+    ai-gateway/              # Provider-agnostic AI client (chat + embeddings) with split timeouts
+    chat/                    # SSE stream client for frontend
+    memory/                  # Auto memory extraction from conversations
+    rag/                     # RAG pipeline (chunker, search, worker with auto-trigger)
     supabase/                # Browser, server, and admin clients
-    n8n/                     # Workflow CRUD + node validation + Hedy template
+    n8n/                     # Workflow CRUD + node validation + Hedy template + editor URL
   components/
     ui/                      # shadcn/ui components
     shared/                  # PageHeader, StatCard, NotificationPanel, etc.
     layout/                  # Sidebar, mobile header
   __tests__/                 # Shared mocks and test helpers
 supabase/
-  migrations/                # 12 incremental SQL migrations
+  migrations/                # 16 incremental SQL migrations
 ```
 
 ## Database Migrations
@@ -155,12 +163,16 @@ Run migrations in order against your Supabase PostgreSQL instance:
 | 10 | `010_assistant_memory.sql` | Memory entries table + embedding trigger |
 | 11 | `011_notifications.sql` | Notification settings + cache + dedup index |
 | 12 | `012_rag_search_tuning.sql` | Mode-aware hybrid search with configurable fan-out |
+| 13 | `013_workflow_error_message.sql` | Workflow error_message column for transparent failure display |
+| 14 | `014_memory_due_date.sql` | Memory due_date column + partial index for task deadlines |
+| 15 | `015_webhook_per_tenant_secret.sql` | Per-tenant webhook HMAC secret + backfill existing tenants |
+| 16 | `016_notification_perf_indexes.sql` | Performance indexes for notification and query hot paths |
 
 All tables use `tenant_id` + RLS policies for multi-tenant isolation.
 
 ## Testing
 
-108 tests across 15 test files using Vitest.
+165 tests across 20 test files using Vitest.
 
 ```bash
 npx vitest run                    # Run all tests
@@ -172,12 +184,13 @@ npx vitest run --reporter=verbose # Detailed output
 - **RAG tenant isolation**: Hybrid search RPC uses `SECURITY INVOKER`, deriving `tenant_id` from RLS auth context — no caller-supplied tenant parameter
 - **Embedding worker safety**: Compare-and-set status claims prevent concurrent double-processing
 - **Notification dedup**: Unique index on `(tenant_id, user_id, period_start, period_end)` + upsert
-- **Webhook auth**: HMAC-SHA256 signature + 5-minute timestamp replay protection
+- **Webhook auth**: Per-tenant HMAC-SHA256 secrets + timing-safe comparison + 5-minute replay protection
 - **n8n node allowlist**: AI-generated workflows restricted to safe transformation/routing nodes
-- **Tenant isolation**: Per-tenant AI tokens, Supabase RLS on all 12 tables, n8n workflow tagging
+- **Tenant isolation**: Per-tenant AI tokens, Supabase RLS on all 16 tables, n8n workflow tagging, per-tenant webhook secrets
 - **Service key protection**: No Supabase service role keys in n8n workflow JSON
-- **Request timeouts**: AbortController-based timeouts on all external service calls (AI 30s, n8n 10s)
-- **Token efficiency**: Budget-capped context injection (history 1200t, RAG 900t, memory 250t), trivial message filtering, batch embeddings
+- **Request timeouts**: Split AbortController timeouts — AI chat 60s, RAG/embedding 10s, n8n 10s, embedding trigger 5s, memory extraction 15s
+- **Token efficiency**: Budget-capped context injection (history 1200t, RAG 900t, memory 250t, deadlines 150t), trivial message filtering, batch embeddings
+- **Performance**: `next/server after()` for non-blocking background work, `Promise.all` for parallel DB queries, SSE delta 60ms throttle, memoized markdown rendering
 
 ## License
 
