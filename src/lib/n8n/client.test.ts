@@ -168,25 +168,42 @@ describe("n8n client", () => {
 });
 
 describe("getWorkflowEditorUrl", () => {
-  const originalEnv = process.env.N8N_EDITOR_BASE_URL;
+  const savedEditor = process.env.N8N_EDITOR_BASE_URL;
+  const savedWebhook = process.env.N8N_WEBHOOK_URL;
 
   afterEach(() => {
-    if (originalEnv === undefined) {
-      delete process.env.N8N_EDITOR_BASE_URL;
-    } else {
-      process.env.N8N_EDITOR_BASE_URL = originalEnv;
-    }
+    if (savedEditor === undefined) delete process.env.N8N_EDITOR_BASE_URL;
+    else process.env.N8N_EDITOR_BASE_URL = savedEditor;
+    if (savedWebhook === undefined) delete process.env.N8N_WEBHOOK_URL;
+    else process.env.N8N_WEBHOOK_URL = savedWebhook;
   });
 
-  it("returns null when N8N_EDITOR_BASE_URL is not set", () => {
+  it("returns null when both URLs are unset", () => {
     delete process.env.N8N_EDITOR_BASE_URL;
-    // getWorkflowEditorUrl reads env at module load, so it may be cached
-    // For this test, we rely on the default empty string behavior
+    delete process.env.N8N_WEBHOOK_URL;
     expect(getWorkflowEditorUrl("wf-1")).toBeNull();
   });
 
-  it("returns null for invalid URL schema", () => {
-    // The function validates http/https at call time from the module-level const
+  it("uses N8N_EDITOR_BASE_URL when set", () => {
+    process.env.N8N_EDITOR_BASE_URL = "https://editor.example.com";
+    process.env.N8N_WEBHOOK_URL = "https://webhook.example.com";
+    expect(getWorkflowEditorUrl("wf-1")).toBe("https://editor.example.com/workflow/wf-1");
+  });
+
+  it("falls back to N8N_WEBHOOK_URL when editor URL is unset", () => {
+    delete process.env.N8N_EDITOR_BASE_URL;
+    process.env.N8N_WEBHOOK_URL = "https://hooks.ngrok.dev";
+    expect(getWorkflowEditorUrl("wf-1")).toBe("https://hooks.ngrok.dev/workflow/wf-1");
+  });
+
+  it("strips trailing slashes", () => {
+    process.env.N8N_EDITOR_BASE_URL = "https://n8n.example.com///";
+    expect(getWorkflowEditorUrl("wf-2")).toBe("https://n8n.example.com/workflow/wf-2");
+  });
+
+  it("returns null for non-http URL", () => {
+    process.env.N8N_EDITOR_BASE_URL = "ftp://bad.example.com";
+    delete process.env.N8N_WEBHOOK_URL;
     expect(getWorkflowEditorUrl("wf-1")).toBeNull();
   });
 });

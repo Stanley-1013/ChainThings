@@ -140,10 +140,9 @@ export async function listWorkflows(): Promise<{ data: N8nWorkflow[] }> {
   return res.json();
 }
 
-const N8N_EDITOR_BASE_URL = process.env.N8N_EDITOR_BASE_URL || "";
-
 export function getWorkflowEditorUrl(workflowId: string): string | null {
-  if (!N8N_EDITOR_BASE_URL) return null;
-  if (!/^https?:\/\//.test(N8N_EDITOR_BASE_URL)) return null;
-  return `${N8N_EDITOR_BASE_URL.replace(/\/+$/, "")}/workflow/${workflowId}`;
+  const base = process.env.N8N_EDITOR_BASE_URL || process.env.N8N_WEBHOOK_URL || "";
+  if (!base) return null;
+  if (!/^https?:\/\//.test(base)) return null;
+  return `${base.replace(/\/+$/, "")}/workflow/${workflowId}`;
 }
