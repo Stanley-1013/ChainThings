@@ -49,11 +49,22 @@ interface N8nResult {
   editorUrl?: string | null;
 }
 
-function LoadingDots() {
+function ProgressStatus({ startTime }: { startTime: number }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Date.now() - startTime), 1000);
+    return () => clearInterval(id);
+  }, [startTime]);
+
+  const label =
+    elapsed < 3000 ? "正在搜索相關資料..." :
+    elapsed < 8000 ? "找到相關資料，正在生成回覆..." :
+    "回覆較長，請稍候...";
+
   return (
     <div role="status" aria-live="polite" className="flex items-center gap-2 h-6 text-sm text-muted-foreground">
       <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      <span>正在思考...</span>
+      <span>{label}</span>
     </div>
   );
 }
@@ -75,12 +86,16 @@ export default function ConversationPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [loadingStartTime, setLoadingStartTime] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const supabaseRef = useRef(createClient());
+  const abortRef = useRef<AbortController | null>(null);
   const lastScrollTime = useRef(0);
 
   useEffect(() => {
+    abortRef.current?.abort();
+    setLoading(false);
     if (!isNew && conversationId) {
       loadMessages();
     }
@@ -130,6 +145,10 @@ export default function ConversationPage() {
     const userMessage = input.trim();
     setInput("");
     setLoading(true);
+    setLoadingStartTime(Date.now());
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const { signal } = abortRef.current;
 
     setMessages((prev) => [
       ...prev,
@@ -141,7 +160,9 @@ export default function ConversationPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userMessage, conversationId: currentConvId, tool: activeTool }),
+        signal,
       });
+      if (signal.aborted) return;
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to send message");
 
@@ -156,6 +177,7 @@ export default function ConversationPage() {
         { id: crypto.randomUUID(), role: "assistant", content: data.message, created_at: new Date().toISOString(), sources: data.sources },
       ]);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       const errorMsg = err instanceof Error ? err.message : "Error sending message";
       setMessages((prev) => [
         ...prev,
@@ -176,13 +198,19 @@ export default function ConversationPage() {
       return prev.filter((_, i) => i !== idx);
     });
     setLoading(true);
+    setLoadingStartTime(Date.now());
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const { signal } = abortRef.current;
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: lastUserMsg.content, conversationId: currentConvId, tool: activeTool }),
+        signal,
       });
+      if (signal.aborted) return;
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to regenerate");
 
@@ -193,6 +221,7 @@ export default function ConversationPage() {
         { id: crypto.randomUUID(), role: "assistant", content: data.message, created_at: new Date().toISOString(), sources: data.sources },
       ]);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       const errorMsg = err instanceof Error ? err.message : "Error regenerating response";
       setMessages((prev) => [
         ...prev,
@@ -411,7 +440,7 @@ export default function ConversationPage() {
                   <Bot className="h-4 w-4" />
                 </div>
                 <div className="bg-muted rounded-2xl rounded-tl-none px-4 py-2.5 shadow-sm min-w-[80px]">
-                  <LoadingDots />
+                  <ProgressStatus startTime={loadingStartTime} />
                 </div>
               </div>
             )}

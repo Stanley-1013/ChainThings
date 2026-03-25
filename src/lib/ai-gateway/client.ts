@@ -90,7 +90,7 @@ export async function chatCompletion(
     const nonSystem = messages.filter((m) => m.role !== "system");
     const lastMsg = nonSystem[nonSystem.length - 1];
 
-    if (lastMsg && lastMsg.role === "user" && nonSystem.length > 1) {
+    if (lastMsg && lastMsg.role === "user") {
       const history = nonSystem.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
       body = JSON.stringify({
         message: lastMsg.content,
