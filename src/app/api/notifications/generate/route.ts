@@ -23,14 +23,18 @@ function buildBoundedLines(
     );
 }
 
-const NOTIFICATION_PROMPT = `You are a personal assistant generating a brief notification digest.
-Based on the following meeting notes and tasks, create a concise summary.
-Return JSON with:
-- "summary": 2-3 sentence overview of the period
-- "actionItems": array of pending tasks with "task" and "priority" (high/medium/low)
-- "reminders": array of things the user should be aware of
+const NOTIFICATION_PROMPT = `You are a JSON generator. You MUST output ONLY a JSON object, no other text.
 
-Keep it concise and actionable. Respond ONLY with valid JSON.`;
+Analyze the data below and return exactly this JSON structure:
+{"summary":"2-3 sentence overview in Traditional Chinese","actionItems":[{"task":"description","priority":"high|medium|low"}],"reminders":["reminder text"]}
+
+Rules:
+- Output ONLY the JSON object, nothing else
+- summary: Summarize key topics and outcomes in 繁體中文
+- actionItems: Extract concrete tasks with deadlines if mentioned
+- reminders: Note important dates, follow-ups, or risks
+- If no data, return {"summary":"本期無新資料。","actionItems":[],"reminders":[]}
+- Do NOT ask questions. Do NOT have a conversation. Just output JSON.`;
 
 interface Target {
   tenant_id: string;
