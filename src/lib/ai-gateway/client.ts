@@ -85,7 +85,21 @@ export async function chatCompletion(
   let body: string;
 
   if (config.requestFormat === "zeroclaw") {
-    body = JSON.stringify({ message: buildZeroClawPrompt(messages) });
+    // Use native context + history params for structured multi-turn
+    const systemParts = messages.filter((m) => m.role === "system").map((m) => m.content.trim()).filter(Boolean);
+    const nonSystem = messages.filter((m) => m.role !== "system");
+    const lastMsg = nonSystem[nonSystem.length - 1];
+
+    if (lastMsg && lastMsg.role === "user" && nonSystem.length > 1) {
+      const history = nonSystem.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+      body = JSON.stringify({
+        message: lastMsg.content,
+        ...(systemParts.length > 0 && { context: systemParts.join("\n\n") }),
+        ...(history.length > 0 && { history }),
+      });
+    } else {
+      body = JSON.stringify({ message: buildZeroClawPrompt(messages) });
+    }
   } else {
     body = JSON.stringify({
       model: options?.model || config.defaultModel,

@@ -16,11 +16,9 @@ import {
   PanelLeft,
   AlertCircle,
   Clock,
-  Search,
   ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { streamChat } from "@/lib/chat/stream-client";
 import { Badge } from "@/components/ui/badge";
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar";
 
@@ -51,37 +49,11 @@ interface N8nResult {
   editorUrl?: string | null;
 }
 
-function StreamingStatus({
-  phase,
-}: {
-  phase: "connecting" | "searching" | "thinking" | "streaming" | null;
-}) {
-  if (!phase || phase === "streaming") return null;
-
-  const labels: Record<string, string> = {
-    connecting: "連線中...",
-    searching: "正在搜索相關資料...",
-    thinking: "正在思考...",
-  };
-
+function LoadingDots() {
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="flex items-center gap-2 h-6 text-sm text-muted-foreground"
-    >
-      {phase === "connecting" ? (
-        <div className="flex space-x-1 items-center">
-          <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:-0.3s]" />
-          <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:-0.15s]" />
-          <div className="h-1.5 w-1.5 bg-muted-foreground rounded-full animate-bounce" />
-        </div>
-      ) : phase === "searching" ? (
-        <Search className="h-3.5 w-3.5 animate-pulse" />
-      ) : (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      )}
-      <span>{labels[phase]}</span>
+    <div role="status" aria-live="polite" className="flex items-center gap-2 h-6 text-sm text-muted-foreground">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      <span>正在思考...</span>
     </div>
   );
 }
@@ -102,17 +74,11 @@ export default function ConversationPage() {
   );
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [streamingPhase, setStreamingPhase] = useState<
-    "connecting" | "searching" | "thinking" | "streaming" | null
-  >(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const supabaseRef = useRef(createClient());
-  const streamingContentRef = useRef("");
-  const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTime = useRef(0);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!isNew && conversationId) {
@@ -123,9 +89,6 @@ export default function ConversationPage() {
       setMessages([]);
       setN8nResults([]);
     }
-    return () => {
-      abortControllerRef.current?.abort();
-    };
   }, [conversationId]);
 
   useEffect(() => {
@@ -167,183 +130,76 @@ export default function ConversationPage() {
     const userMessage = input.trim();
     setInput("");
     setLoading(true);
-    setStreamingPhase("connecting");
-    streamingContentRef.current = "";
 
-    // Cancel any previous pending request
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = new AbortController();
-
-    const assistantMsgId = crypto.randomUUID();
     setMessages((prev) => [
       ...prev,
-      {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: userMessage,
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: assistantMsgId,
-        role: "assistant",
-        content: "",
-        created_at: new Date().toISOString(),
-      },
+      { id: crypto.randomUUID(), role: "user", content: userMessage, created_at: new Date().toISOString() },
     ]);
 
     try {
-      await streamChat(
-        "/api/chat",
-        {
-          message: userMessage,
-          conversationId: currentConvId,
-          tool: activeTool,
-        },
-        {
-          onStatus: (phase) => setStreamingPhase(phase),
-          onSources: (sources) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId ? { ...m, sources } : m
-              )
-            );
-          },
-          onDelta: (content) => {
-            setStreamingPhase("streaming");
-            streamingContentRef.current += content;
-            if (!updateTimerRef.current) {
-              updateTimerRef.current = setTimeout(() => {
-                const snap = streamingContentRef.current;
-                setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: snap } : m));
-                updateTimerRef.current = null;
-              }, 60);
-            }
-          },
-          onN8n: (result) => setN8nResults((prev) => [...prev, result]),
-          onDone: (data) => {
-            if (updateTimerRef.current) { clearTimeout(updateTimerRef.current); updateTimerRef.current = null; }
-            const final1 = streamingContentRef.current;
-            if (final1) setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: final1 } : m));
-            if (!currentConvId && data.conversationId) {
-              setCurrentConvId(data.conversationId);
-              router.replace(`/chat/${data.conversationId}`);
-            }
-          },
-          onError: (errorMsg) => {
-            setStreamingPhase(null);
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId ? { ...m, content: `Error: ${errorMsg}` } : m
-              )
-            );
-          },
-        },
-        abortControllerRef.current.signal
-      );
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage, conversationId: currentConvId, tool: activeTool }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to send message");
+
+      if (!currentConvId && data.conversationId) {
+        setCurrentConvId(data.conversationId);
+        router.replace(`/chat/${data.conversationId}`);
+      }
+      if (data.n8n) setN8nResults((prev) => [...prev, data.n8n]);
+
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: data.message, created_at: new Date().toISOString(), sources: data.sources },
+      ]);
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
-      const errorMsg =
-        err instanceof Error ? err.message : "Error sending message";
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, content: `Error: ${errorMsg}` } : m
-        )
-      );
+      const errorMsg = err instanceof Error ? err.message : "Error sending message";
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: `Error: ${errorMsg}`, created_at: new Date().toISOString() },
+      ]);
     } finally {
       setLoading(false);
-      setStreamingPhase(null);
     }
   }
 
   const handleRegenerate = async () => {
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUserMsg) return;
-    streamingContentRef.current = "";
 
-    // Remove last assistant message
     setMessages((prev) => {
       const idx = prev.findLastIndex((m) => m.role === "assistant");
       if (idx === -1) return prev;
       return prev.filter((_, i) => i !== idx);
     });
-
-    const assistantMsgId = crypto.randomUUID();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: assistantMsgId,
-        role: "assistant",
-        content: "",
-        created_at: new Date().toISOString(),
-      },
-    ]);
-
     setLoading(true);
-    setStreamingPhase("connecting");
-
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = new AbortController();
 
     try {
-      await streamChat(
-        "/api/chat",
-        {
-          message: lastUserMsg.content,
-          conversationId: currentConvId,
-          tool: activeTool,
-        },
-        {
-          onStatus: (phase) => setStreamingPhase(phase),
-          onSources: (sources) => {
-            setMessages((prev) =>
-              prev.map((m) => (m.id === assistantMsgId ? { ...m, sources } : m))
-            );
-          },
-          onDelta: (content) => {
-            setStreamingPhase("streaming");
-            streamingContentRef.current += content;
-            if (!updateTimerRef.current) {
-              updateTimerRef.current = setTimeout(() => {
-                const snap = streamingContentRef.current;
-                setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: snap } : m));
-                updateTimerRef.current = null;
-              }, 60);
-            }
-          },
-          onN8n: (result) => setN8nResults((prev) => [...prev, result]),
-          onDone: (data) => {
-            if (updateTimerRef.current) { clearTimeout(updateTimerRef.current); updateTimerRef.current = null; }
-            const final2 = streamingContentRef.current;
-            if (final2) setMessages((prev) => prev.map((m) => m.id === assistantMsgId ? { ...m, content: final2 } : m));
-            if (!currentConvId && data.conversationId) {
-              setCurrentConvId(data.conversationId);
-            }
-          },
-          onError: (errorMsg) => {
-            setStreamingPhase(null);
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId
-                  ? { ...m, content: `Error: ${errorMsg}` }
-                  : m
-              )
-            );
-          },
-        },
-        abortControllerRef.current.signal
-      );
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: lastUserMsg.content, conversationId: currentConvId, tool: activeTool }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to regenerate");
+
+      if (data.n8n) setN8nResults((prev) => [...prev, data.n8n]);
+
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: data.message, created_at: new Date().toISOString(), sources: data.sources },
+      ]);
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
-      const errorMsg =
-        err instanceof Error ? err.message : "Error regenerating response";
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, content: `Error: ${errorMsg}` } : m
-        )
-      );
+      const errorMsg = err instanceof Error ? err.message : "Error regenerating response";
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: `Error: ${errorMsg}`, created_at: new Date().toISOString() },
+      ]);
     } finally {
       setLoading(false);
-      setStreamingPhase(null);
     }
   };
 
@@ -549,13 +405,13 @@ export default function ConversationPage() {
               </div>
             ))}
 
-            {loading && streamingPhase && streamingPhase !== "streaming" && (
+            {loading && (
               <div className="flex items-start gap-3">
                 <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 bg-muted border">
                   <Bot className="h-4 w-4" />
                 </div>
                 <div className="bg-muted rounded-2xl rounded-tl-none px-4 py-2.5 shadow-sm min-w-[80px]">
-                  <StreamingStatus phase={streamingPhase} />
+                  <LoadingDots />
                 </div>
               </div>
             )}

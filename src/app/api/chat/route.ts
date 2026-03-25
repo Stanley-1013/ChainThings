@@ -13,10 +13,8 @@ const AI_MEMORY_EXTRACTION = process.env.AI_MEMORY_EXTRACTION !== "false";
 const MAX_HISTORY_FETCH = 20;
 const HISTORY_TOKEN_BUDGET = 1200;
 const RAG_TOKEN_BUDGET = 900;
-const MEMORY_TOKEN_BUDGET = 250;
 const DEADLINE_TOKEN_BUDGET = 150;
 const MAX_RAG_RESULTS = 3;
-const MAX_MEMORIES = 4;
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -194,10 +192,7 @@ export async function POST(request: Request) {
     chatMessages.unshift({ role: "system", content: N8N_SYSTEM_PROMPT });
   }
 
-  // Determine response mode: SSE or JSON
-  const wantSSE = request.headers.get("accept")?.includes("text/event-stream");
-
-  // --- Core logic shared by SSE and JSON modes ---
+  // --- Core logic ---
 
   async function runRag(): Promise<Array<{ id: string; title: string | null; type: string }>> {
     if (tool === "n8n" || !shouldRunRag(message)) return [];
@@ -235,44 +230,18 @@ export async function POST(request: Request) {
         ragBudgetUsed += chunkCost;
       }
 
-      // Parallel fetch: memories + deadlines
+      // Fetch upcoming deadlines (keep this — clear product value)
       const threeDays = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
-      const [memoriesResult, deadlinesResult] = await Promise.all([
-        ragBudgetUsed < RAG_TOKEN_BUDGET - 100
-          ? supabase
-              .from("chainthings_memory_entries")
-              .select("category, content")
-              .eq("tenant_id", tenantId)
-              .eq("status", "active")
-              .order("importance", { ascending: false })
-              .limit(MAX_MEMORIES)
-          : Promise.resolve({ data: null }),
-        supabase
-          .from("chainthings_memory_entries")
-          .select("content, due_date")
-          .eq("tenant_id", tenantId)
-          .eq("status", "active")
-          .eq("category", "task")
-          .not("due_date", "is", null)
-          .lte("due_date", threeDays)
-          .order("due_date", { ascending: true })
-          .limit(5),
-      ]);
-
-      const memories = memoriesResult.data;
-      if (memories?.length) {
-        contextParts.push("\n[Assistant Memory]");
-        let memBudget = 0;
-        for (const m of memories) {
-          const line = `- [${m.category}] ${truncateToTokens(m.content, 60)}`;
-          const lineCost = estimateTokens(line);
-          if (memBudget + lineCost > MEMORY_TOKEN_BUDGET) break;
-          contextParts.push(line);
-          memBudget += lineCost;
-        }
-      }
-
-      const deadlines = deadlinesResult.data;
+      const { data: deadlines } = await supabase
+        .from("chainthings_memory_entries")
+        .select("content, due_date")
+        .eq("tenant_id", tenantId)
+        .eq("status", "active")
+        .eq("category", "task")
+        .not("due_date", "is", null)
+        .lte("due_date", threeDays)
+        .order("due_date", { ascending: true })
+        .limit(5);
       if (deadlines?.length) {
         const now = Date.now();
         const deadlineLines = ["[Upcoming Deadlines]"];
@@ -357,74 +326,6 @@ export async function POST(request: Request) {
     }
   }
 
-  // --- SSE mode ---
-  if (wantSSE) {
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        const send = (event: string, data: unknown) => {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        };
-
-        try {
-          // Phase 1: RAG
-          send("status", { phase: "searching" });
-          const ragSources = await runRag();
-          if (ragSources.length > 0) {
-            send("sources", ragSources);
-          }
-
-          // Phase 2: AI completion
-          send("status", { phase: "thinking" });
-          const response = await chatCompletion(chatMessages, user.id, aiOptions);
-          const rawContent = response.choices[0]?.message?.content || "No response";
-          const assistantContent = stripToolCalls(rawContent);
-
-          // Persist BEFORE pushing delta (data consistency)
-          const n8nResult = await processN8n(assistantContent);
-
-          await supabase.from("chainthings_messages").insert({
-            conversation_id: convId,
-            tenant_id: tenantId,
-            role: "assistant",
-            content: assistantContent,
-            metadata: {
-              usage: response.usage,
-              ...(n8nResult && { n8n: n8nResult }),
-            },
-          });
-
-          // Push events
-          send("delta", { content: assistantContent });
-          if (n8nResult) send("n8n", n8nResult);
-
-          // Memory extraction (deferred via after() — doesn't block SSE done)
-          if (AI_MEMORY_EXTRACTION && shouldExtractMemory(message, tool)) {
-            after(async () => {
-              try { await extractAndSaveMemories(message, assistantContent, tenantId, aiOptions); } catch { /* non-fatal */ }
-            });
-          }
-
-          send("done", { conversationId: convId });
-        } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : "Unknown error";
-          send("error", { message: errorMessage });
-        } finally {
-          controller.close();
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-  }
-
-  // --- JSON mode (backward compatible) ---
   try {
     const ragSources = await runRag();
 
