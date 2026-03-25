@@ -160,12 +160,21 @@ async function generateForTarget(target: Target): Promise<boolean> {
     { role: "user", content: contextParts.join("\n") },
   ]);
 
-  const aiContent = response.choices[0]?.message?.content || "{}";
+  let aiContent = response.choices[0]?.message?.content || "{}";
+  // Strip markdown code block wrapper (```json ... ```)
+  const jsonBlockMatch = aiContent.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (jsonBlockMatch) aiContent = jsonBlockMatch[1].trim();
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(aiContent);
   } catch {
-    parsed = { summary: aiContent, actionItems: [], reminders: [] };
+    // Try extracting any JSON object from the response
+    const objMatch = aiContent.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      try { parsed = JSON.parse(objMatch[0]); } catch { parsed = { summary: aiContent, actionItems: [], reminders: [] }; }
+    } else {
+      parsed = { summary: aiContent, actionItems: [], reminders: [] };
+    }
   }
 
   // Watermark = max timestamp from sources actually included in this generation
