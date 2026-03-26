@@ -198,11 +198,7 @@ export async function POST(request: Request) {
     if (tool === "n8n" || !shouldRunRag(message)) return [];
     try {
       const searchMode = detectSearchMode(message);
-      const queryEmbedding = await generateEmbedding(message, {
-        provider: aiOptions.provider,
-        token: aiOptions.token,
-        tenantId: tenantId,
-      });
+      const queryEmbedding = await generateEmbedding(message);
 
       const results = await hybridSearch(queryEmbedding, message, {
         limit: MAX_RAG_RESULTS,

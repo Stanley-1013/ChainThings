@@ -29,7 +29,8 @@ DOCKER_ENV_KEYS = \
 	NEXT_PUBLIC_APP_URL \
 	CHAINTHINGS_WEBHOOK_SECRET \
 	CRON_SECRET \
-	AI_MEMORY_EXTRACTION
+	AI_MEMORY_EXTRACTION \
+	JINA_API_KEY
 
 .PHONY: up down dev tunnel tunnel-app tunnel-stop status env-sync migrate build
 

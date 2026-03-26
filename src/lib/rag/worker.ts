@@ -90,7 +90,7 @@ export async function processEmbeddingQueue(
         const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
         const embeddings = await generateEmbeddings(
           batch.map((c) => c.content),
-          { tenantId: doc.tenant_id, signal: options?.signal }
+          { signal: options?.signal }
         );
 
         const rows = batch.map((chunk, idx) => ({
