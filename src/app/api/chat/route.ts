@@ -333,15 +333,18 @@ export async function POST(request: Request) {
     let rawContent = response.choices[0]?.message?.content || "No response";
     let assistantContent = stripToolCalls(rawContent);
 
-    // Retry once if response was only tool calls (ZeroClaw tried to use tools)
+    // Retry once with 30s cap if response was only tool calls
     if (!assistantContent.trim()) {
       console.warn("[chat] tool-call-only response, retrying with no-tools instruction");
       chatMessages.push({ role: "system", content: "回答用戶的問題。不要使用工具。直接用文字回答。" });
       try {
-        response = await chatCompletion(chatMessages, user.id, { ...aiOptions });
-        rawContent = response.choices[0]?.message?.content || "";
+        const retryResult = await Promise.race([
+          chatCompletion(chatMessages, user.id, aiOptions),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("retry timeout")), 30_000)),
+        ]);
+        rawContent = retryResult.choices[0]?.message?.content || "";
         assistantContent = stripToolCalls(rawContent);
-      } catch { /* use fallback below */ }
+      } catch { /* timeout or error — use fallback */ }
       if (!assistantContent.trim()) {
         assistantContent = "抱歉，我目前無法處理這個請求，請稍後再試。";
       }

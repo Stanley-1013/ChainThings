@@ -56,7 +56,8 @@ async function hasNewData(tenantId: string, watermark: string | null): Promise<b
       .or(`created_at.gt.${since},updated_at.gt.${since}`),
     adminDb.from("chainthings_memory_entries").select("id", { count: "exact", head: true })
       .eq("tenant_id", tenantId).eq("status", "active").eq("category", "task")
-      .not("due_date", "is", null).lte("due_date", threeDaysFromNow),
+      .not("due_date", "is", null).lte("due_date", threeDaysFromNow)
+      .or(`created_at.gt.${since},updated_at.gt.${since}`),
   ]);
 
   if (itemsRes.error) throw new Error(`Failed to check items: ${itemsRes.error.message}`);
@@ -109,10 +110,11 @@ async function generateForTarget(target: Target): Promise<boolean> {
 
   if (itemsRes.error) throw new Error(`Failed to fetch items: ${itemsRes.error.message}`);
   if (memoriesRes.error) throw new Error(`Failed to fetch tasks: ${memoriesRes.error.message}`);
+  if (upcomingRes.error) console.warn(`[notifications] Failed to fetch deadlines: ${upcomingRes.error.message}`);
 
   const recentItems = itemsRes.data;
   const memories = memoriesRes.data;
-  const upcomingTasks = upcomingRes.data;
+  const upcomingTasks = upcomingRes.data ?? [];
 
   if (!recentItems?.length && !memories?.length && !upcomingTasks?.length) return false;
 
