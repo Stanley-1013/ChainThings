@@ -31,6 +31,7 @@ interface NotificationCache {
     summary?: string;
     actionItems?: Array<{ task: string; priority?: string }>;
     reminders?: string[];
+    recentMeetings?: Array<{ title: string; date: string }>;
   };
   status: string;
   created_at: string;
@@ -190,12 +191,12 @@ export function NotificationPanel() {
               <p className="text-sm">{latest.content.summary}</p>
             )}
 
-            {latest.content.actionItems && latest.content.actionItems.length > 0 && (
+            {(latest.content.actionItems ?? []).length > 0 && (
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Action Items
                 </p>
-                {latest.content.actionItems.map((item, i) => (
+                {(latest.content.actionItems ?? []).map((item: { task: string; priority?: string }, i: number) => (
                   <div key={i} className="flex items-start gap-2 text-sm">
                     <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
                     <span>{item.task}</span>
@@ -212,15 +213,31 @@ export function NotificationPanel() {
               </div>
             )}
 
-            {latest.content.reminders && latest.content.reminders.length > 0 && (
+            {(latest.content.reminders ?? []).length > 0 && (
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Reminders
                 </p>
-                {latest.content.reminders.map((reminder, i) => (
+                {(latest.content.reminders ?? []).map((reminder: string, i: number) => (
                   <div key={i} className="flex items-start gap-2 text-sm">
                     <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
                     <span>{reminder}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {latest.content.recentMeetings && latest.content.recentMeetings.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Recent Meetings
+                </p>
+                {latest.content.recentMeetings.map((meeting: { title: string; date: string }, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="truncate">{meeting.title}</span>
+                    <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                      {new Date(meeting.date).toLocaleDateString()}
+                    </span>
                   </div>
                 ))}
               </div>

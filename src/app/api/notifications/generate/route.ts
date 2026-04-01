@@ -23,18 +23,6 @@ function buildBoundedLines(
     );
 }
 
-const NOTIFICATION_PROMPT = `You are a JSON generator. You MUST output ONLY a JSON object, no other text.
-
-Analyze the data below and return exactly this JSON structure:
-{"summary":"2-3 sentence overview in Traditional Chinese","actionItems":[{"task":"description","priority":"high|medium|low"}],"reminders":["reminder text"]}
-
-Rules:
-- Output ONLY the JSON object, nothing else
-- summary: Summarize key topics and outcomes in 繁體中文
-- actionItems: Extract concrete tasks with deadlines if mentioned
-- reminders: Note important dates, follow-ups, or risks
-- If no data, return {"summary":"本期無新資料。","actionItems":[],"reminders":[]}
-- Do NOT ask questions. Do NOT have a conversation. Just output JSON.`;
 
 interface Target {
   tenant_id: string;
@@ -128,58 +116,53 @@ async function generateForTarget(target: Target): Promise<boolean> {
 
   if (!recentItems?.length && !memories?.length && !upcomingTasks?.length) return false;
 
-  const contextParts: string[] = [];
-  if (recentItems?.length) {
-    contextParts.push("Recent Meeting Notes:");
-    for (const line of buildBoundedLines(
-      recentItems.map((item) => `${item.title}: ${item.content || ""}`),
-      ITEM_LIMIT,
-      ITEM_SNIPPET_CHARS
-    )) {
-      contextParts.push(`- ${line}`);
-    }
-  }
-  if (memories?.length) {
-    contextParts.push("\nPending Tasks:");
-    for (const line of buildBoundedLines(
-      memories.map((m) => m.content),
-      TASK_LIMIT,
-      TASK_SNIPPET_CHARS
-    )) {
-      contextParts.push(`- ${line}`);
-    }
-  }
-  if (upcomingTasks?.length) {
-    contextParts.push("\nUpcoming Deadlines (prioritize these):");
-    const now = Date.now();
-    for (const t of upcomingTasks) {
-      const daysLeft = Math.ceil((new Date(t.due_date).getTime() - now) / (24 * 60 * 60 * 1000));
-      const urgency = daysLeft <= 1 ? "⚠️ TODAY/OVERDUE" : daysLeft <= 3 ? "URGENT" : `${daysLeft} days left`;
-      contextParts.push(`- [${urgency}] ${t.content.slice(0, TASK_SNIPPET_CHARS)}`);
-    }
-  }
+  // Step 1: Build structured data from DB (deterministic)
+  const actionItems = (memories ?? []).slice(0, TASK_LIMIT).map((m) => ({
+    task: m.content.slice(0, TASK_SNIPPET_CHARS),
+    priority: "medium" as string,
+  }));
 
-  const response = await chatCompletion([
-    { role: "system", content: NOTIFICATION_PROMPT },
-    { role: "user", content: contextParts.join("\n") },
-  ]);
+  const now = Date.now();
+  const reminders = (upcomingTasks ?? []).map((d) => {
+    const days = Math.ceil((new Date(d.due_date).getTime() - now) / (24 * 60 * 60 * 1000));
+    const label = days <= 0 ? "已逾期" : days === 1 ? "明天到期" : `${days} 天後到期`;
+    return `${d.content.slice(0, TASK_SNIPPET_CHARS)}（${label}）`;
+  });
 
-  let aiContent = response.choices[0]?.message?.content || "{}";
-  // Strip markdown code block wrapper (```json ... ```)
-  const jsonBlockMatch = aiContent.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (jsonBlockMatch) aiContent = jsonBlockMatch[1].trim();
-  let parsed: Record<string, unknown>;
+  const recentMeetings = (recentItems ?? []).slice(0, 5).map((item) => ({
+    title: item.title || "未命名會議",
+    date: item.created_at,
+  }));
+
+  // Step 2: AI generates ONLY a short summary (plain text, no JSON needed)
+  let summary: string;
   try {
-    parsed = JSON.parse(aiContent);
-  } catch {
-    // Try extracting any JSON object from the response
-    const objMatch = aiContent.match(/\{[\s\S]*\}/);
-    if (objMatch) {
-      try { parsed = JSON.parse(objMatch[0]); } catch { parsed = { summary: aiContent, actionItems: [], reminders: [] }; }
-    } else {
-      parsed = { summary: aiContent, actionItems: [], reminders: [] };
+    const contextLines: string[] = [];
+    if (recentItems?.length) {
+      contextLines.push("會議記錄：");
+      for (const item of recentItems.slice(0, ITEM_LIMIT)) {
+        contextLines.push(`- ${item.title}: ${(item.content || "").slice(0, ITEM_SNIPPET_CHARS)}`);
+      }
     }
+    if (memories?.length) {
+      contextLines.push("待辦事項：");
+      for (const m of memories.slice(0, TASK_LIMIT)) {
+        contextLines.push(`- ${m.content.slice(0, TASK_SNIPPET_CHARS)}`);
+      }
+    }
+
+    const aiResponse = await chatCompletion([
+      { role: "system", content: "用繁體中文寫 2-3 句話總結以下資料的重點。只輸出摘要文字，不要其他內容。" },
+      { role: "user", content: contextLines.join("\n") },
+    ]);
+    const aiText = aiResponse.choices[0]?.message?.content?.trim();
+    summary = aiText && aiText.length > 10 ? aiText : `本期有 ${actionItems.length} 筆待辦事項和 ${recentMeetings.length} 筆會議記錄。`;
+  } catch {
+    summary = `本期有 ${actionItems.length} 筆待辦事項和 ${recentMeetings.length} 筆會議記錄。`;
   }
+
+  // Step 3: Combine into structured content
+  const parsed = { summary, actionItems, reminders, recentMeetings };
 
   // Watermark = max timestamp from sources actually included in this generation
   // This prevents race conditions where data inserted during AI call gets skipped

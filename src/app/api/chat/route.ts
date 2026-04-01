@@ -57,8 +57,12 @@ function selectHistoryWithinBudget(
   return selected;
 }
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant. Always respond in Traditional Chinese (繁體中文) unless the user explicitly writes in another language.
-Do not include any internal tool calls, XML tags, or system markup in your responses.`;
+const DEFAULT_SYSTEM_PROMPT = `You are a personal secretary (私人秘書) for the user.
+When relevant context is provided below, use it to answer the user's question.
+If the provided context is insufficient, say what information is missing.
+If no context is provided, answer using your general knowledge.
+Always respond in Traditional Chinese (繁體中文) unless the user writes in another language.
+Do not include any XML tags, tool calls, or system markup in your responses.`;
 
 function stripToolCalls(content: string): string {
   // Remove <tool_call>...</tool_call> blocks that ZeroClaw may include
@@ -325,9 +329,23 @@ export async function POST(request: Request) {
   try {
     const ragSources = await runRag();
 
-    const response = await chatCompletion(chatMessages, user.id, aiOptions);
-    const rawContent = response.choices[0]?.message?.content || "No response";
-    const assistantContent = stripToolCalls(rawContent);
+    let response = await chatCompletion(chatMessages, user.id, aiOptions);
+    let rawContent = response.choices[0]?.message?.content || "No response";
+    let assistantContent = stripToolCalls(rawContent);
+
+    // Retry once if response was only tool calls (ZeroClaw tried to use tools)
+    if (!assistantContent.trim()) {
+      console.warn("[chat] tool-call-only response, retrying with no-tools instruction");
+      chatMessages.push({ role: "system", content: "回答用戶的問題。不要使用工具。直接用文字回答。" });
+      try {
+        response = await chatCompletion(chatMessages, user.id, { ...aiOptions });
+        rawContent = response.choices[0]?.message?.content || "";
+        assistantContent = stripToolCalls(rawContent);
+      } catch { /* use fallback below */ }
+      if (!assistantContent.trim()) {
+        assistantContent = "抱歉，我目前無法處理這個請求，請稍後再試。";
+      }
+    }
 
     const n8nResult = await processN8n(assistantContent);
 
