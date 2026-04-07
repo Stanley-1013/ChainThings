@@ -49,7 +49,7 @@ const configs: Record<AiProvider, () => ProviderConfig | undefined> = {
       name: "openclaw",
       baseUrl: url,
       defaultToken: env("OPENCLAW_GATEWAY_TOKEN"),
-      defaultModel: env("OPENCLAW_MODEL") || "openclaw:main",
+      defaultModel: env("OPENCLAW_MODEL") || "openclaw",
       timeoutMs: baseTimeout,
       chatTimeoutMs: envTimeout("OPENCLAW_CHAT_TIMEOUT_MS", Math.max(baseTimeout, 60_000)),
       embeddingTimeoutMs: envTimeout("RAG_TIMEOUT_MS", 10_000),

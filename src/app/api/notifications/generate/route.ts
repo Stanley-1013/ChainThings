@@ -1,26 +1,49 @@
 import { supabaseAdmin as adminDb } from "@/lib/supabase/admin";
-import { chatCompletion } from "@/lib/ai-gateway";
 import { NextResponse } from "next/server";
 
-const ITEM_LIMIT = 8;
-const ITEM_SNIPPET_CHARS = 120;
 const TASK_LIMIT = 8;
 const TASK_SNIPPET_CHARS = 80;
 const MANUAL_COOLDOWN_MS = 60_000; // 1 minute cooldown for manual triggers
 
-function buildBoundedLines(
-  lines: string[],
-  maxItems: number,
-  maxCharsPerItem: number
+function buildDeterministicSummary(
+  recentItems: Array<{ title?: string | null; metadata?: unknown }> | null | undefined,
+  actionItemCount: number,
+  meetingCount: number
+): string {
+  let summary = "";
+  for (const item of recentItems ?? []) {
+    const metadata = item.metadata as Record<string, unknown> | null;
+    const rawSummary = (metadata?.summary as string) || (metadata?.recap as string) || "";
+    const itemSummary = rawSummary.trim().length > 0
+      ? rawSummary.trim().slice(0, 150)
+      : typeof item.title === "string"
+        ? item.title.trim()
+        : "";
+    if (!itemSummary) continue;
+    const next = summary ? `${summary}；${itemSummary}` : itemSummary;
+    if (next.length > 200) {
+      if (!summary) summary = itemSummary.slice(0, 200).trim();
+      break;
+    }
+    summary = next;
+  }
+  return summary || `本期有 ${actionItemCount} 筆待辦事項和 ${meetingCount} 筆會議記錄。`;
+}
+
+function extractKeyPoints(
+  recentItems: Array<{ metadata?: unknown }> | null | undefined
 ): string[] {
-  return lines
-    .filter(Boolean)
-    .slice(0, maxItems)
-    .map((line) =>
-      line.length <= maxCharsPerItem
-        ? line
-        : `${line.slice(0, maxCharsPerItem).trimEnd()}...`
-    );
+  const keyPoints: string[] = [];
+  for (const item of recentItems ?? []) {
+    const metadata = item.metadata as Record<string, unknown> | null;
+    if (!Array.isArray(metadata?.keyPoints)) continue;
+    for (const point of metadata.keyPoints) {
+      if (typeof point === "string" && point.trim().length > 0) {
+        keyPoints.push(point.trim());
+      }
+    }
+  }
+  return keyPoints;
 }
 
 
@@ -136,35 +159,10 @@ async function generateForTarget(target: Target): Promise<boolean> {
     date: item.created_at,
   }));
 
-  // Step 2: AI generates ONLY a short summary (plain text, no JSON needed)
-  let summary: string;
-  try {
-    const contextLines: string[] = [];
-    if (recentItems?.length) {
-      contextLines.push("會議記錄：");
-      for (const item of recentItems.slice(0, ITEM_LIMIT)) {
-        contextLines.push(`- ${item.title}: ${(item.content || "").slice(0, ITEM_SNIPPET_CHARS)}`);
-      }
-    }
-    if (memories?.length) {
-      contextLines.push("待辦事項：");
-      for (const m of memories.slice(0, TASK_LIMIT)) {
-        contextLines.push(`- ${m.content.slice(0, TASK_SNIPPET_CHARS)}`);
-      }
-    }
+  const summary = buildDeterministicSummary(recentItems, actionItems.length, recentMeetings.length);
+  const keyPoints = extractKeyPoints(recentItems);
 
-    const aiResponse = await chatCompletion([
-      { role: "system", content: "用繁體中文寫 2-3 句話總結以下資料的重點。只輸出摘要文字，不要其他內容。" },
-      { role: "user", content: contextLines.join("\n") },
-    ]);
-    const aiText = aiResponse.choices[0]?.message?.content?.trim();
-    summary = aiText && aiText.length > 10 ? aiText : `本期有 ${actionItems.length} 筆待辦事項和 ${recentMeetings.length} 筆會議記錄。`;
-  } catch {
-    summary = `本期有 ${actionItems.length} 筆待辦事項和 ${recentMeetings.length} 筆會議記錄。`;
-  }
-
-  // Step 3: Combine into structured content
-  const parsed = { summary, actionItems, reminders, recentMeetings };
+  const parsed = { summary, keyPoints, actionItems, reminders, recentMeetings };
 
   // Watermark = max timestamp from sources actually included in this generation
   // This prevents race conditions where data inserted during AI call gets skipped

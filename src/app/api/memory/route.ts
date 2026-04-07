@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { triggerEmbedding } from "@/lib/rag/worker";
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -98,9 +97,63 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  after(() => triggerEmbedding(profile.tenant_id));
-
   return NextResponse.json({ data }, { status: 201 });
+}
+
+export async function PATCH(request: Request) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data: profile } = await supabase
+    .from("chainthings_profiles")
+    .select("tenant_id")
+    .eq("id", user.id)
+    .single();
+  if (!profile?.tenant_id) {
+    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+  }
+
+  const { id, due_date } = await request.json();
+  if (!id) {
+    return NextResponse.json({ error: "id is required" }, { status: 400 });
+  }
+
+  if (
+    due_date !== null &&
+    (typeof due_date !== "string" || Number.isNaN(new Date(due_date).getTime()))
+  ) {
+    return NextResponse.json(
+      { error: "due_date must be a valid ISO 8601 date string or null" },
+      { status: 400 }
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("chainthings_memory_entries")
+    .update({
+      due_date,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("tenant_id", profile.tenant_id)
+    .eq("status", "active")
+    .select("*")
+    .single();
+
+  if (error) {
+    const notFound = error.code === "PGRST116";
+    return NextResponse.json(
+      { error: notFound ? "Memory entry not found" : error.message },
+      { status: notFound ? 404 : 500 }
+    );
+  }
+
+  return NextResponse.json({ data });
 }
 
 export async function DELETE(request: Request) {

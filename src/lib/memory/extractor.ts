@@ -1,6 +1,5 @@
 import { chatCompletion, type ChatCompletionOptions } from "@/lib/ai-gateway";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { triggerEmbedding } from "@/lib/rag/worker";
 
 export interface MemoryExtraction {
   category: "task" | "preference" | "fact" | "project";
@@ -111,7 +110,6 @@ export async function extractAndSaveMemories(
       }))
     );
 
-    await triggerEmbedding(tenantId);
   } catch {
     // Memory extraction failure is non-fatal
   } finally {

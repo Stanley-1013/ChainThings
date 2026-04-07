@@ -96,7 +96,7 @@ describe("ai-gateway client", () => {
       expect(init.headers["x-tenant-id"]).toBe("t-123");
 
       const body = JSON.parse(init.body);
-      expect(body.model).toBe("openclaw:main");
+      expect(body.model).toBe("openclaw");
       expect(body.messages).toHaveLength(1);
       expect(body.stream).toBe(false);
       expect(body.user).toBe("user-1");

@@ -69,7 +69,6 @@ vi.mock("@/lib/n8n/templates/hedy-webhook", () => ({
 
 // Mock @/lib/rag/worker
 vi.mock("@/lib/rag/worker", () => ({
-  triggerEmbedding: vi.fn(),
   processEmbeddingQueue: vi.fn(() => ({ processed: 0, failed: 0 })),
 }));
 

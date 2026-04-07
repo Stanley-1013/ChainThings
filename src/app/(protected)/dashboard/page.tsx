@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
-import { NotificationPanel } from "@/components/shared/notification-panel";
+import { TaskCenter } from "@/components/shared/task-center/task-center";
 import {
   MessageSquare,
   FolderOpen,
@@ -66,7 +66,7 @@ export default async function DashboardPage() {
         />
       </div>
 
-      <NotificationPanel />
+      <TaskCenter />
 
       <div className="space-y-4">
         <h2 className="text-xl font-semibold tracking-tight">External Services</h2>

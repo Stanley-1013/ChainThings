@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { triggerEmbedding } from "@/lib/rag/worker";
+import { extractItemMetadata } from "@/lib/items/extractor";
 import { NextResponse, after } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 
@@ -127,7 +127,29 @@ export async function POST(
     );
   }
 
-  after(() => triggerEmbedding(tenantId));
+  // Auto-extract metadata (summary, keyPoints, actionItems) in background
+  after(async () => {
+    try {
+      // Look up tenant AI config for extraction
+      const { data: aiIntegrations } = await supabaseAdmin
+        .from("chainthings_integrations")
+        .select("service, config")
+        .eq("tenant_id", tenantId)
+        .in("service", ["zeroclaw", "openclaw"]);
+
+      const zcIntegration = aiIntegrations?.find((i) => i.service === "zeroclaw");
+      const ocIntegration = aiIntegrations?.find((i) => i.service === "openclaw");
+      const aiConfig = (zcIntegration || ocIntegration)?.config as Record<string, unknown> | null;
+
+      await extractItemMetadata(data.id, tenantId, {
+        provider: zcIntegration ? "zeroclaw" : ocIntegration ? "openclaw" : undefined,
+        token: (aiConfig?.api_token as string) || undefined,
+        tenantId,
+      });
+    } catch {
+      // Extraction failure is non-fatal — item is already saved
+    }
+  });
 
   return NextResponse.json({ success: true, id: data.id });
 }

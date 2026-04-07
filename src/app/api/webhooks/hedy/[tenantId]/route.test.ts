@@ -4,11 +4,6 @@ import { createHmac } from "crypto";
 
 const WEBHOOK_SECRET = "test-webhook-secret";
 
-// Mock triggerEmbedding
-vi.mock("@/lib/rag/worker", () => ({
-  triggerEmbedding: vi.fn(),
-}));
-
 // Mock supabaseAdmin
 const mockFrom = vi.fn();
 vi.mock("@/lib/supabase/admin", () => ({
