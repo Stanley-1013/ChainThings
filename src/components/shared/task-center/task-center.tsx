@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ClipboardList, Plus, Settings2, type LucideIcon } from "lucide-react";
+import { ClipboardList, Plus, RefreshCw, Settings2, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { TaskList } from "./task-list";
@@ -27,6 +27,7 @@ export function TaskCenter() {
   const [meetings, setMeetings] = useState<MeetingNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -128,6 +129,19 @@ export function TaskCenter() {
           <Button size="sm" onClick={() => setAddDialogOpen(true)} className="h-8">
             <Plus className="h-4 w-4 mr-1" />
             新增
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            disabled={refreshing}
+            onClick={async () => {
+              setRefreshing(true);
+              await loadData();
+              setRefreshing(false);
+            }}
+          >
+            <RefreshCw className={`h-4 w-4 text-muted-foreground ${refreshing ? "animate-spin" : ""}`} />
           </Button>
           <Link href="/settings">
             <Button variant="ghost" size="icon" className="h-8 w-8">
