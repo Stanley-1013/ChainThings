@@ -3,6 +3,8 @@ export interface TaskEntry {
   content: string;
   importance: number;
   due_date: string | null;
+  assignee: string | null;
+  task_status: "todo" | "in_progress" | "done";
   source_type: string;
   source_id: string | null;
   created_at: string;

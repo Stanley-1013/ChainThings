@@ -5,12 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ClipboardList, Plus, RefreshCw, Settings2, type LucideIcon } from "lucide-react";
+import { ClipboardList, Plus, RefreshCw, Settings2, X, Trash2, Bell, CheckCircle2, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { TaskList } from "./task-list";
 import { RecentMeetings } from "./recent-meetings";
 import { AddTaskDialog } from "./add-task-dialog";
+import { BatchReminderPopover } from "./batch-reminder-popover";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import type { TaskEntry, MeetingNote } from "./types";
 
 export function SectionTitle({ icon: Icon, title }: { icon: LucideIcon; title: string }) {
@@ -28,6 +30,30 @@ export function TaskCenter() {
   const [loading, setLoading] = useState(true);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Batch selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
+
+  const batchMode = selectedIds.size > 0;
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(tasks.map((t) => t.id)));
+  }, [tasks]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -91,6 +117,54 @@ export function TaskCenter() {
     toast.success(dueDate ? "提醒已設定" : "提醒已清除");
   };
 
+  // Batch operations
+  const batchDelete = async () => {
+    setBatchLoading(true);
+    const ids = Array.from(selectedIds);
+    const res = await fetch("/api/memory", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    setBatchLoading(false);
+    if (!res.ok) { toast.error("批量刪除失敗"); return; }
+    setTasks((prev) => prev.filter((t) => !selectedIds.has(t.id)));
+    toast.success(`已刪除 ${ids.length} 項任務`);
+    clearSelection();
+    setBatchDeleteOpen(false);
+  };
+
+  const batchSetDueDate = async (date: Date | undefined) => {
+    setBatchLoading(true);
+    const ids = Array.from(selectedIds);
+    const due_date = date?.toISOString() ?? null;
+    const res = await fetch("/api/memory", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, due_date }),
+    });
+    setBatchLoading(false);
+    if (!res.ok) { toast.error("批量設定提醒失敗"); return; }
+    setTasks((prev) => prev.map((t) => selectedIds.has(t.id) ? { ...t, due_date } : t));
+    toast.success(date ? `已為 ${ids.length} 項設定提醒` : `已清除 ${ids.length} 項提醒`);
+    clearSelection();
+  };
+
+  const batchMarkDone = async () => {
+    setBatchLoading(true);
+    const ids = Array.from(selectedIds);
+    const res = await fetch("/api/memory", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, task_status: "done" }),
+    });
+    setBatchLoading(false);
+    if (!res.ok) { toast.error("批量標記失敗"); return; }
+    setTasks((prev) => prev.filter((t) => !selectedIds.has(t.id)));
+    toast.success(`已完成 ${ids.length} 項任務`);
+    clearSelection();
+  };
+
   if (loading) {
     return (
       <Card className="border-primary/10">
@@ -121,37 +195,85 @@ export function TaskCenter() {
   return (
     <Card className="border-primary/10">
       <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-lg flex items-center gap-2">
-          <ClipboardList className="h-5 w-5 text-primary" />
-          任務中心
-        </CardTitle>
-        <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => setAddDialogOpen(true)} className="h-8">
-            <Plus className="h-4 w-4 mr-1" />
-            新增
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            disabled={refreshing}
-            onClick={async () => {
-              setRefreshing(true);
-              await loadData();
-              setRefreshing(false);
-            }}
-          >
-            <RefreshCw className={`h-4 w-4 text-muted-foreground ${refreshing ? "animate-spin" : ""}`} />
-          </Button>
-          <Link href="/settings">
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <Settings2 className="h-4 w-4 text-muted-foreground" />
-            </Button>
-          </Link>
-        </div>
+        {batchMode ? (
+          <>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <span className="text-primary font-medium">已選 {selectedIds.size} 項</span>
+              {selectedIds.size < tasks.length && (
+                <Button variant="link" size="sm" onClick={selectAll} className="h-auto p-0 text-xs">
+                  全選
+                </Button>
+              )}
+            </CardTitle>
+            <div className="flex items-center gap-1">
+              <BatchReminderPopover onSelect={batchSetDueDate} disabled={batchLoading} />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={batchLoading}
+                onClick={batchMarkDone}
+              >
+                <CheckCircle2 className="h-4 w-4 mr-1" />
+                完成
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs text-destructive hover:text-destructive"
+                disabled={batchLoading}
+                onClick={() => setBatchDeleteOpen(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                刪除
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={clearSelection}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-primary" />
+              任務中心
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={() => setAddDialogOpen(true)} className="h-8">
+                <Plus className="h-4 w-4 mr-1" />
+                新增
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                disabled={refreshing}
+                onClick={async () => {
+                  setRefreshing(true);
+                  await loadData();
+                  setRefreshing(false);
+                }}
+              >
+                <RefreshCw className={`h-4 w-4 text-muted-foreground ${refreshing ? "animate-spin" : ""}`} />
+              </Button>
+              <Link href="/settings">
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <Settings2 className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              </Link>
+            </div>
+          </>
+        )}
       </CardHeader>
       <CardContent className="space-y-6">
-        <TaskList tasks={tasks} onDelete={deleteTask} onUpdateDueDate={updateDueDate} onAdd={() => setAddDialogOpen(true)} />
+        <TaskList
+          tasks={tasks}
+          onDelete={deleteTask}
+          onUpdateDueDate={updateDueDate}
+          onAdd={() => setAddDialogOpen(true)}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+        />
         {meetings.length > 0 && (
           <>
             <Separator />
@@ -160,6 +282,16 @@ export function TaskCenter() {
         )}
       </CardContent>
       <AddTaskDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} onAdd={addTask} />
+      <ConfirmDialog
+        open={batchDeleteOpen}
+        onOpenChange={setBatchDeleteOpen}
+        title="批量刪除"
+        description={`確定要刪除選取的 ${selectedIds.size} 項待辦事項嗎？此動作無法復原。`}
+        confirmLabel="刪除"
+        variant="destructive"
+        onConfirm={batchDelete}
+        loading={batchLoading}
+      />
     </Card>
   );
 }

@@ -10,9 +10,11 @@ interface TaskListProps {
   onDelete: (id: string) => Promise<void>;
   onUpdateDueDate: (id: string, dueDate: string | null) => Promise<void>;
   onAdd: () => void;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 }
 
-export function TaskList({ tasks, onDelete, onUpdateDueDate, onAdd }: TaskListProps) {
+export function TaskList({ tasks, onDelete, onUpdateDueDate, onAdd, selectedIds, onToggleSelect }: TaskListProps) {
   return (
     <div>
       <SectionTitle icon={ClipboardList} title="待辦事項" />
@@ -28,7 +30,14 @@ export function TaskList({ tasks, onDelete, onUpdateDueDate, onAdd }: TaskListPr
       ) : (
         <div className="space-y-2">
           {tasks.map((task) => (
-            <TaskItem key={task.id} task={task} onDelete={onDelete} onUpdateDueDate={onUpdateDueDate} />
+            <TaskItem
+              key={task.id}
+              task={task}
+              onDelete={onDelete}
+              onUpdateDueDate={onUpdateDueDate}
+              selected={selectedIds?.has(task.id) ?? false}
+              onToggleSelect={onToggleSelect}
+            />
           ))}
         </div>
       )}

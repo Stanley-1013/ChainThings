@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { TaskEntry } from "./types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ReminderPopover } from "./reminder-popover";
@@ -50,9 +51,11 @@ interface TaskItemProps {
   task: TaskEntry;
   onDelete: (id: string) => Promise<void>;
   onUpdateDueDate: (id: string, dueDate: string | null) => Promise<void>;
+  selected: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
-export function TaskItem({ task, onDelete, onUpdateDueDate }: TaskItemProps) {
+export function TaskItem({ task, onDelete, onUpdateDueDate, selected, onToggleSelect }: TaskItemProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const status = getDueStatus(task.due_date);
@@ -67,31 +70,47 @@ export function TaskItem({ task, onDelete, onUpdateDueDate }: TaskItemProps) {
   return (
     <div
       className={cn(
-        "group flex items-center justify-between p-3 rounded-lg border border-border transition-all hover:shadow-sm",
-        status.className
+        "group flex items-center gap-3 p-3 rounded-lg border border-border transition-all hover:shadow-sm",
+        status.className,
+        selected && "bg-primary/5 border-primary/30"
       )}
     >
-      <div className="flex flex-col gap-1 min-w-0 flex-1">
-        <p className="text-sm leading-snug">{task.content}</p>
-        <Badge variant={status.variant} className={cn("text-[10px] px-1.5 h-4 w-fit", status.badgeClass)}>
-          {status.label}
-        </Badge>
-      </div>
+      <Checkbox
+        checked={selected}
+        onCheckedChange={() => onToggleSelect?.(task.id)}
+        className="shrink-0"
+      />
 
-      <div className="flex items-center gap-1 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-        <ReminderPopover
-          currentDate={task.due_date ? new Date(task.due_date) : undefined}
-          onSelect={(date) => onUpdateDueDate(task.id, date ? date.toISOString() : null)}
-        />
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="刪除任務"
-          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-          onClick={() => setDeleteOpen(true)}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+      <div className="flex items-center justify-between flex-1 min-w-0">
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
+          <p className="text-sm leading-snug">{task.content}</p>
+          <div className="flex items-center gap-1.5">
+            <Badge variant={status.variant} className={cn("text-[10px] px-1.5 h-4 w-fit", status.badgeClass)}>
+              {status.label}
+            </Badge>
+            {task.assignee && (
+              <Badge variant="outline" className="text-[10px] px-1.5 h-4 w-fit">
+                {task.assignee}
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+          <ReminderPopover
+            currentDate={task.due_date ? new Date(task.due_date) : undefined}
+            onSelect={(date) => onUpdateDueDate(task.id, date ? date.toISOString() : null)}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="刪除任務"
+            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+            onClick={() => setDeleteOpen(true)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <ConfirmDialog

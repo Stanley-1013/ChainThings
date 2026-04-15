@@ -118,42 +118,62 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const { id, due_date } = await request.json();
-  if (!id) {
-    return NextResponse.json({ error: "id is required" }, { status: 400 });
+  const body = await request.json();
+  const ids: string[] = body.ids ?? (body.id ? [body.id] : []);
+  if (ids.length === 0) {
+    return NextResponse.json({ error: "id or ids is required" }, { status: 400 });
   }
 
-  if (
-    due_date !== null &&
-    (typeof due_date !== "string" || Number.isNaN(new Date(due_date).getTime()))
-  ) {
-    return NextResponse.json(
-      { error: "due_date must be a valid ISO 8601 date string or null" },
-      { status: 400 }
-    );
+  const updates: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if ("due_date" in body) {
+    if (
+      body.due_date !== null &&
+      (typeof body.due_date !== "string" || Number.isNaN(new Date(body.due_date).getTime()))
+    ) {
+      return NextResponse.json(
+        { error: "due_date must be a valid ISO 8601 date string or null" },
+        { status: 400 }
+      );
+    }
+    updates.due_date = body.due_date;
+  }
+  if ("assignee" in body) {
+    updates.assignee = typeof body.assignee === "string" ? body.assignee : null;
+  }
+  if ("task_status" in body) {
+    const validStatuses = ["todo", "in_progress", "done"];
+    if (!validStatuses.includes(body.task_status)) {
+      return NextResponse.json(
+        { error: `task_status must be one of: ${validStatuses.join(", ")}` },
+        { status: 400 }
+      );
+    }
+    updates.task_status = body.task_status;
+  }
+  if ("importance" in body) {
+    const imp = Number(body.importance);
+    if (!Number.isFinite(imp) || imp < 1 || imp > 10) {
+      return NextResponse.json({ error: "importance must be 1-10" }, { status: 400 });
+    }
+    updates.importance = imp;
   }
 
   const { data, error } = await supabase
     .from("chainthings_memory_entries")
-    .update({
-      due_date,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id)
+    .update(updates)
+    .in("id", ids)
     .eq("tenant_id", profile.tenant_id)
     .eq("status", "active")
-    .select("*")
-    .single();
+    .select("*");
 
   if (error) {
-    const notFound = error.code === "PGRST116";
-    return NextResponse.json(
-      { error: notFound ? "Memory entry not found" : error.message },
-      { status: notFound ? 404 : 500 }
-    );
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ data });
+  return NextResponse.json({ data: data ?? [], updated: data?.length ?? 0 });
 }
 
 export async function DELETE(request: Request) {
@@ -174,9 +194,9 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  const { id, clearAll } = await request.json();
+  const body = await request.json();
 
-  if (clearAll) {
+  if (body.clearAll) {
     const { error } = await supabase
       .from("chainthings_memory_entries")
       .update({ status: "archived", updated_at: new Date().toISOString() })
@@ -189,19 +209,20 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ data: { cleared: true } });
   }
 
-  if (!id) {
-    return NextResponse.json({ error: "id or clearAll is required" }, { status: 400 });
+  const ids: string[] = body.ids ?? (body.id ? [body.id] : []);
+  if (ids.length === 0) {
+    return NextResponse.json({ error: "id, ids, or clearAll is required" }, { status: 400 });
   }
 
   const { error } = await supabase
     .from("chainthings_memory_entries")
     .update({ status: "archived", updated_at: new Date().toISOString() })
-    .eq("id", id)
+    .in("id", ids)
     .eq("tenant_id", profile.tenant_id);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ data: { archived: true } });
+  return NextResponse.json({ data: { archived: ids.length } });
 }
