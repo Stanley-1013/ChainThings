@@ -2,17 +2,17 @@ export interface EmbeddingOptions {
   signal?: AbortSignal;
 }
 
-const JINA_API_KEY = process.env.JINA_API_KEY || "";
-const JINA_MODEL = "jina-embeddings-v3";
-const JINA_URL = "https://api.jina.ai/v1/embeddings";
-const EMBEDDING_TIMEOUT_MS = parseInt(process.env.RAG_TIMEOUT_MS || "10000", 10);
+const EMBEDDING_URL = process.env.EMBEDDING_URL || "http://localhost:31968/v1/embeddings";
+const EMBEDDING_API_KEY = process.env.EMBEDDING_API_KEY || "";
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "Qwen3-Embedding-8B-4bit-DWQ";
+const EMBEDDING_DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS || "1024", 10);
+const EMBEDDING_TIMEOUT_MS = parseInt(process.env.RAG_TIMEOUT_MS || "30000", 10);
 
 export async function generateEmbeddings(
   input: string[],
   options?: EmbeddingOptions
 ): Promise<number[][]> {
   if (input.length === 0) return [];
-  if (!JINA_API_KEY) throw new Error("JINA_API_KEY not configured");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), EMBEDDING_TIMEOUT_MS);
@@ -21,19 +21,27 @@ export async function generateEmbeddings(
   }
 
   try {
-    const res = await fetch(JINA_URL, {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (EMBEDDING_API_KEY) {
+      headers["Authorization"] = `Bearer ${EMBEDDING_API_KEY}`;
+    }
+
+    const res = await fetch(EMBEDDING_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${JINA_API_KEY}`,
-      },
-      body: JSON.stringify({ input, model: JINA_MODEL }),
+      headers,
+      body: JSON.stringify({
+        input,
+        model: EMBEDDING_MODEL,
+        dimensions: EMBEDDING_DIMENSIONS,
+      }),
       signal: controller.signal,
     });
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`Jina embedding error ${res.status}: ${errText}`);
+      throw new Error(`Embedding error ${res.status}: ${errText}`);
     }
 
     const data = await res.json();
@@ -45,7 +53,7 @@ export async function generateEmbeddings(
     return [];
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(`Jina embedding request timed out after ${EMBEDDING_TIMEOUT_MS}ms`);
+      throw new Error(`Embedding request timed out after ${EMBEDDING_TIMEOUT_MS}ms`);
     }
     throw err;
   } finally {

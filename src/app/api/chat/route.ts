@@ -202,7 +202,29 @@ export async function POST(request: Request) {
     if (tool === "n8n" || !shouldRunRag(message)) return [];
     try {
       const searchMode = detectSearchMode(message);
-      const queryEmbedding = await generateEmbedding(message);
+
+      // Skip embedding API call entirely for fulltext mode
+      const embeddingPromise = searchMode === "fulltext"
+        ? Promise.resolve(null)
+        : generateEmbedding(message);
+
+      // Fetch deadlines in parallel with embedding
+      const deadlinesPromise = supabase
+        .from("chainthings_memory_entries")
+        .select("content, due_date")
+        .eq("tenant_id", tenantId)
+        .eq("status", "active")
+        .eq("category", "task")
+        .not("due_date", "is", null)
+        .lte("due_date", new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString())
+        .order("due_date", { ascending: true })
+        .limit(5);
+
+      const [queryEmbedding, deadlinesResult] = await Promise.all([
+        embeddingPromise,
+        Promise.resolve(deadlinesPromise).catch(() => ({ data: null })),
+      ]);
+      const deadlines = deadlinesResult?.data as Array<{ content: string; due_date: string }> | null;
 
       const results = await hybridSearch(queryEmbedding, message, {
         limit: MAX_RAG_RESULTS,
@@ -230,18 +252,6 @@ export async function POST(request: Request) {
         ragBudgetUsed += chunkCost;
       }
 
-      // Fetch upcoming deadlines (keep this — clear product value)
-      const threeDays = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
-      const { data: deadlines } = await supabase
-        .from("chainthings_memory_entries")
-        .select("content, due_date")
-        .eq("tenant_id", tenantId)
-        .eq("status", "active")
-        .eq("category", "task")
-        .not("due_date", "is", null)
-        .lte("due_date", threeDays)
-        .order("due_date", { ascending: true })
-        .limit(5);
       if (deadlines?.length) {
         const now = Date.now();
         const deadlineLines = ["[Upcoming Deadlines]"];

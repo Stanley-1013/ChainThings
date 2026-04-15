@@ -50,13 +50,15 @@ describe("generateHedyWebhookWorkflow", () => {
     );
   });
 
-  it("maps Hedy body fields correctly in jsonBody expression", () => {
+  it("maps Hedy body.data fields correctly in jsonBody expression", () => {
     const wf = generateHedyWebhookWorkflow(tenantId, appBaseUrl, webhookSecret);
     const jsonBody = wf.nodes[1].parameters.jsonBody;
-    expect(jsonBody).toContain("$json.body.title");
-    expect(jsonBody).toContain("$json.body.meeting_minutes");
-    expect(jsonBody).toContain("$json.body.transcript");
-    expect(jsonBody).toContain("$json.body.sessionId");
+    expect(jsonBody).toContain("$json.body.data.title");
+    expect(jsonBody).toContain("$json.body.data.meeting_minutes");
+    expect(jsonBody).toContain("$json.body.data.transcript");
+    expect(jsonBody).toContain("$json.body.data.sessionId");
+    expect(jsonBody).toContain("$json.body.data.user_todos");
+    expect(jsonBody).toContain('x-hedy-event');
     expect(jsonBody).toContain("meeting_note");
   });
 });

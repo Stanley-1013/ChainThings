@@ -80,6 +80,16 @@ function setupMocks(profileExists = true, insertSuccess = true) {
     }
     if (table === "chainthings_items") {
       return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => ({
+                data: null,
+                error: null,
+              })),
+            })),
+          })),
+        })),
         insert: vi.fn(() => ({
           select: vi.fn(() => ({
             single: vi.fn(() => ({
@@ -88,6 +98,12 @@ function setupMocks(profileExists = true, insertSuccess = true) {
                 ? null
                 : { message: "constraint violation" },
             })),
+          })),
+        })),
+        update: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            data: null,
+            error: null,
           })),
         })),
       };

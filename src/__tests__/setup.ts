@@ -67,6 +67,20 @@ vi.mock("@/lib/n8n/templates/hedy-webhook", () => ({
   generateHedyWebhookWorkflow: vi.fn(),
 }));
 
+// Mock @/lib/ai-gateway/embeddings
+vi.mock("@/lib/ai-gateway/embeddings", () => ({
+  generateEmbedding: vi.fn(() => new Array(1024).fill(0)),
+  generateEmbeddings: vi.fn((input: string[]) => input.map(() => new Array(1024).fill(0))),
+}));
+
+// Mock @/lib/rag
+vi.mock("@/lib/rag", () => ({
+  hybridSearch: vi.fn(() => []),
+  chunkContent: vi.fn(() => []),
+  contentHash: vi.fn(() => "mock-hash"),
+  processEmbeddingQueue: vi.fn(() => ({ processed: 0, failed: 0 })),
+}));
+
 // Mock @/lib/rag/worker
 vi.mock("@/lib/rag/worker", () => ({
   processEmbeddingQueue: vi.fn(() => ({ processed: 0, failed: 0 })),

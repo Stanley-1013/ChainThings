@@ -33,6 +33,11 @@ services:
       - SUPABASE_COOKIE_NAME=${SUPABASE_COOKIE_NAME:-sb-chainthings-auth-token}
       - NEXT_PUBLIC_SUPABASE_COOKIE_NAME=${SUPABASE_COOKIE_NAME:-sb-chainthings-auth-token}
       - CRON_SECRET=${CRON_SECRET:-}
+      - EMBEDDING_URL=http://host.docker.internal:31968/v1/embeddings
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-claw}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-Qwen3-Embedding-8B-4bit-DWQ}
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-1024}
+      - RAG_TIMEOUT_MS=${RAG_TIMEOUT_MS:-30000}
     networks:
       default:
       lab_net:

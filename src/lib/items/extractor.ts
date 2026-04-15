@@ -15,7 +15,7 @@ const EXTRACT_TIMEOUT_MS = 30_000;
 export async function extractItemMetadata(
   itemId: string,
   tenantId: string,
-  aiOptions?: ChatCompletionOptions
+  aiOptions?: ChatCompletionOptions & { skipActionItems?: boolean }
 ): Promise<{ extracted: Record<string, unknown> } | null> {
   const { data: item } = await supabaseAdmin
     .from("chainthings_items")
@@ -62,9 +62,9 @@ export async function extractItemMetadata(
       })
       .eq("id", itemId);
 
-    // Create memory entries from action items
+    // Create memory entries from action items (skip if Hedy already provided structured ones)
     const actionItems = extracted.actionItems as Array<{ task: string; assignee?: string }> | undefined;
-    if (actionItems?.length) {
+    if (actionItems?.length && !aiOptions?.skipActionItems) {
       await supabaseAdmin
         .from("chainthings_memory_entries")
         .delete()

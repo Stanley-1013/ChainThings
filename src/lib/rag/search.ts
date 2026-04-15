@@ -12,7 +12,7 @@ export interface SearchResult {
 }
 
 export async function hybridSearch(
-  queryEmbedding: number[],
+  queryEmbedding: number[] | null,
   queryText: string,
   options?: {
     sourceTypes?: string[];
@@ -23,15 +23,15 @@ export async function hybridSearch(
 ): Promise<SearchResult[]> {
   const supabase = await createClient();
   const mode = options?.mode ?? "hybrid";
-  const { data, error } = await supabase.rpc("chainthings_rag_hybrid_search", {
-    query_embedding: queryEmbedding.length ? `[${queryEmbedding.join(",")}]` : null,
+  const { data, error } = await supabase.rpc("chainthings_hybrid_search", {
+    query_embedding: queryEmbedding?.length ? `[${queryEmbedding.join(",")}]` : null,
     query_text: queryText,
     p_source_types: options?.sourceTypes ?? null,
     p_limit: options?.limit ?? 5,
     p_rrf_k: 60,
     p_enable_semantic: mode !== "fulltext",
     p_enable_fulltext: mode !== "semantic",
-    p_candidate_multiplier: mode === "hybrid" ? 2 : 1,
+    p_candidate_multiplier: mode === "hybrid" ? 3 : 1,
   });
 
   if (error) {
@@ -46,6 +46,6 @@ export async function hybridSearch(
     title: row.title as string | null,
     content: row.content as string,
     metadata: (row.metadata ?? {}) as Record<string, unknown>,
-    score: row.rrf_score as number,
+    score: (row.rrf_score ?? row.similarity ?? 0) as number,
   }));
 }
