@@ -5,6 +5,9 @@ import { hybridSearch } from "@/lib/rag";
 import { createWorkflow, getWorkflowEditorUrl } from "@/lib/n8n/client";
 import { validateWorkflowNodes } from "@/lib/n8n/validation";
 import { shouldExtractMemory, extractAndSaveMemories } from "@/lib/memory/extractor";
+import { buildDevSystemPrompt, parseDevActions, getConnectedServices, getConnectedServicesForProject, listDevProjects, type DevProject } from "@/lib/dev-services/prompts";
+import { generateApprovalToken } from "@/lib/dev-services/approval";
+import { getAction, validateActionInput } from "@/lib/dev-services/action-registry";
 import { NextResponse, after } from "next/server";
 
 const AI_MEMORY_EXTRACTION = process.env.AI_MEMORY_EXTRACTION !== "false";
@@ -103,7 +106,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { message, conversationId, tool } = await request.json();
+  const { message, conversationId, tool, projectId } = await request.json();
 
   if (!message || typeof message !== "string") {
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
@@ -196,10 +199,30 @@ export async function POST(request: Request) {
     chatMessages.unshift({ role: "system", content: N8N_SYSTEM_PROMPT });
   }
 
+  // Prepend system prompt for dev tool mode
+  let devConnectedServices: Awaited<ReturnType<typeof getConnectedServices>> = [];
+  let devProject: DevProject | undefined;
+  if (tool === "dev") {
+    if (projectId && typeof projectId === "string") {
+      // Verify project belongs to tenant
+      const projects = await listDevProjects(tenantId);
+      devProject = projects.find((p) => p.id === projectId);
+      if (devProject) {
+        devConnectedServices = await getConnectedServicesForProject(tenantId, projectId);
+      } else {
+        devConnectedServices = await getConnectedServices(tenantId);
+      }
+    } else {
+      devConnectedServices = await getConnectedServices(tenantId);
+    }
+    const devPrompt = buildDevSystemPrompt(devConnectedServices, devProject);
+    chatMessages.unshift({ role: "system", content: devPrompt });
+  }
+
   // --- Core logic ---
 
   async function runRag(): Promise<Array<{ id: string; title: string | null; type: string }>> {
-    if (tool === "n8n" || !shouldRunRag(message)) return [];
+    if (tool === "n8n" || tool === "dev" || !shouldRunRag(message)) return [];
     try {
       const searchMode = detectSearchMode(message);
 
@@ -362,6 +385,44 @@ export async function POST(request: Request) {
 
     const n8nResult = await processN8n(assistantContent);
 
+    // Process dev-action blocks
+    let devServiceResult: { projectId?: string; service?: string; action?: string; workflow?: string; params: unknown; requiresApproval: boolean; approvalToken?: string } | undefined;
+    if (tool === "dev") {
+      const devActions = parseDevActions(assistantContent);
+      if (devActions.length > 0) {
+        const first = devActions[0];
+        const actionDef = first.type === "action" && first.action ? getAction(first.action) : null;
+        const needsApproval = first.type === "workflow" || (actionDef?.requiresApproval ?? true);
+
+        // Normalize params to match what the actions route will consume.
+        // Token hash must match validation.data, not raw AI-proposed params
+        // (Zod .default() values would otherwise cause 403).
+        const tokenAction = first.type === "workflow" ? "execute_workflow" : (first.action ?? "");
+        const rawParams = first.type === "workflow"
+          ? { workflow: first.workflow, params: first.params }
+          : first.params;
+
+        let normalizedParams = rawParams;
+        if (tokenAction) {
+          const v = validateActionInput(tokenAction, rawParams);
+          if (v.success) normalizedParams = v.data as typeof rawParams;
+          // If validation fails, keep rawParams — actions route will reject it anyway
+        }
+
+        devServiceResult = {
+          projectId: devProject?.id,
+          service: first.service,
+          action: first.action,
+          workflow: first.workflow,
+          params: first.params, // Keep raw in UI response (for display)
+          requiresApproval: needsApproval,
+          approvalToken: needsApproval
+            ? await generateApprovalToken(tenantId, tokenAction, normalizedParams)
+            : undefined,
+        };
+      }
+    }
+
     await supabase.from("chainthings_messages").insert({
       conversation_id: convId,
       tenant_id: tenantId,
@@ -370,6 +431,7 @@ export async function POST(request: Request) {
       metadata: {
         usage: response.usage,
         ...(n8nResult && { n8n: n8nResult }),
+        ...(devServiceResult && { devService: devServiceResult }),
       },
     });
 
@@ -384,6 +446,7 @@ export async function POST(request: Request) {
       conversationId: convId,
       message: assistantContent,
       n8n: n8nResult,
+      devService: devServiceResult,
       sources: ragSources.length > 0 ? ragSources : undefined,
     });
   } catch (err) {

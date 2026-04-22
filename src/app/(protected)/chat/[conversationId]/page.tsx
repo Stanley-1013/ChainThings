@@ -17,6 +17,8 @@ import {
   AlertCircle,
   Clock,
   ChevronDown,
+  Code2,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +34,14 @@ import {
   SheetContent,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface Message {
   id: string;
@@ -80,6 +90,11 @@ export default function ConversationPage() {
   const [loading, setLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [n8nResults, setN8nResults] = useState<N8nResult[]>([]);
+  type DevResult = { projectId?: string; service?: string; action?: string; workflow?: string; params: unknown; requiresApproval: boolean; approvalToken?: string };
+  const [devResults, setDevResults] = useState<DevResult[]>([]);
+  const [pendingAction, setPendingAction] = useState<{ index: number; result: DevResult } | null>(null);
+  const [devProjects, setDevProjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [currentConvId, setCurrentConvId] = useState<string | null>(
     isNew ? null : conversationId
   );
@@ -111,6 +126,18 @@ export default function ConversationPage() {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, loading, isAtBottom]);
+
+  useEffect(() => {
+    if (activeTool !== "dev" || devProjects.length > 0) return;
+    void fetch("/api/dev-services/projects")
+      .then((r) => r.json() as Promise<{ data?: Array<{ id: string; name: string }> }>)
+      .then((j) => {
+        const list = j.data ?? [];
+        setDevProjects(list.map((p) => ({ id: p.id, name: p.name })));
+        if (list[0] && !activeProjectId) setActiveProjectId(list[0].id);
+      })
+      .catch(() => {});
+  }, [activeTool, devProjects.length, activeProjectId]);
 
   const handleScroll = useCallback(() => {
     const now = Date.now();
@@ -159,7 +186,7 @@ export default function ConversationPage() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMessage, conversationId: currentConvId, tool: activeTool }),
+        body: JSON.stringify({ message: userMessage, conversationId: currentConvId, tool: activeTool, projectId: activeProjectId ?? undefined }),
         signal,
       });
       if (signal.aborted) return;
@@ -171,6 +198,7 @@ export default function ConversationPage() {
         router.replace(`/chat/${data.conversationId}`);
       }
       if (data.n8n) setN8nResults((prev) => [...prev, data.n8n]);
+      if (data.devService) setDevResults((prev) => [...prev, data.devService]);
 
       setMessages((prev) => [
         ...prev,
@@ -207,7 +235,7 @@ export default function ConversationPage() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: lastUserMsg.content, conversationId: currentConvId, tool: activeTool }),
+        body: JSON.stringify({ message: lastUserMsg.content, conversationId: currentConvId, tool: activeTool, projectId: activeProjectId ?? undefined }),
         signal,
       });
       if (signal.aborted) return;
@@ -215,6 +243,7 @@ export default function ConversationPage() {
       if (!res.ok) throw new Error(data.error || "Failed to regenerate");
 
       if (data.n8n) setN8nResults((prev) => [...prev, data.n8n]);
+      if (data.devService) setDevResults((prev) => [...prev, data.devService]);
 
       setMessages((prev) => [
         ...prev,
@@ -250,6 +279,65 @@ export default function ConversationPage() {
           />
         </div>
       )}
+
+      {/* Dev action confirm dialog */}
+      <Dialog open={pendingAction != null} onOpenChange={(open) => { if (!open) setPendingAction(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-amber-500" />
+              Execute action?
+            </DialogTitle>
+            <DialogDescription>
+              Review the action details below before confirming execution.
+            </DialogDescription>
+          </DialogHeader>
+          {pendingAction && (
+            <div className="space-y-3 py-1">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                <span className="text-muted-foreground">Action</span>
+                <span className="font-medium">{pendingAction.result.workflow ?? pendingAction.result.action ?? "dev action"}</span>
+                <span className="text-muted-foreground">Service</span>
+                <span className="font-medium">{pendingAction.result.service ?? "github"}</span>
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Params</p>
+                <pre className="rounded-lg bg-muted px-3 py-2 text-xs overflow-auto max-h-40 whitespace-pre-wrap break-all">
+                  {JSON.stringify(pendingAction.result.params, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingAction(null)}>Cancel</Button>
+            <Button
+              onClick={async () => {
+                if (!pendingAction) return;
+                const { index: i, result: r } = pendingAction;
+                const pid = r.projectId ?? activeProjectId;
+                if (!pid) { setPendingAction(null); return; }
+                const res = await fetch("/api/dev-services/actions", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    projectId: pid,
+                    service: r.service ?? "github",
+                    action: r.workflow ? "execute_workflow" : r.action,
+                    params: r.workflow ? { workflow: r.workflow, params: r.params } : r.params,
+                    approvalToken: r.approvalToken,
+                  }),
+                });
+                if (res.ok) {
+                  setDevResults((prev) => prev.map((d, j) => j === i ? { ...d, requiresApproval: false } : d));
+                }
+                setPendingAction(null);
+              }}
+            >
+              Confirm Execute
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Mobile sidebar (sheet) */}
       <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
@@ -291,6 +379,12 @@ export default function ConversationPage() {
             <div className="flex items-center gap-2 px-3 py-1 bg-orange-50 dark:bg-orange-950 border border-orange-100 dark:border-orange-800 rounded-lg text-sm text-orange-800 dark:text-orange-200">
               <Zap className="h-3.5 w-3.5 text-orange-500 fill-orange-500" />
               <span className="font-semibold text-xs">n8n mode</span>
+            </div>
+          )}
+          {activeTool === "dev" && (
+            <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 dark:bg-blue-950 border border-blue-100 dark:border-blue-800 rounded-lg text-sm text-blue-800 dark:text-blue-200">
+              <Code2 className="h-3.5 w-3.5 text-blue-500" />
+              <span className="font-semibold text-xs">dev mode</span>
             </div>
           )}
 
@@ -347,6 +441,36 @@ export default function ConversationPage() {
                   </Badge>
                 );
               })}
+            </div>
+          )}
+
+          {devResults.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 ml-auto">
+              {devResults.map((r, i) => (
+                <Badge
+                  key={i}
+                  variant="secondary"
+                  className="pl-1 pr-2 py-0.5 flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950 text-blue-800 dark:text-blue-200 border-blue-100 dark:border-blue-800"
+                >
+                  <div className="p-0.5 bg-blue-200 dark:bg-blue-800 rounded-full">
+                    <Code2 className="h-2.5 w-2.5 text-blue-700 dark:text-blue-300" />
+                  </div>
+                  <span className="max-w-[150px] truncate">
+                    {r.workflow ?? r.action ?? "dev action"}
+                  </span>
+                  {r.requiresApproval && (
+                    <button
+                      className="ml-1 text-xs bg-blue-600 text-white rounded px-2 py-1 hover:bg-blue-700"
+                      onClick={() => setPendingAction({ index: i, result: r })}
+                    >
+                      Execute
+                    </button>
+                  )}
+                  {!r.requiresApproval && (
+                    <span className="text-[9px] text-green-600">✓</span>
+                  )}
+                </Badge>
+              ))}
             </div>
           )}
         </div>
@@ -486,6 +610,40 @@ export default function ConversationPage() {
                 />
                 n8n tool
               </Button>
+              <Button
+                variant={activeTool === "dev" ? "default" : "secondary"}
+                size="sm"
+                onClick={() =>
+                  setActiveTool(activeTool === "dev" ? null : "dev")
+                }
+                className={cn(
+                  "h-7 text-[10px] uppercase tracking-wider font-bold",
+                  activeTool === "dev" &&
+                    "bg-blue-500 hover:bg-blue-600 text-white"
+                )}
+              >
+                <Code2
+                  className={cn(
+                    "h-3 w-3 mr-1",
+                    activeTool === "dev" && "fill-current"
+                  )}
+                />
+                dev tool
+              </Button>
+              {activeTool === "dev" && devProjects.length > 0 && (
+                <select
+                  value={activeProjectId ?? ""}
+                  onChange={(e) => setActiveProjectId(e.target.value || null)}
+                  className="h-7 rounded-md border border-input bg-background px-2 text-[10px] uppercase tracking-wider font-bold"
+                  title="Dev project context"
+                >
+                  {devProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <form onSubmit={sendMessage} className="relative">
@@ -496,7 +654,9 @@ export default function ConversationPage() {
                 placeholder={
                   activeTool === "n8n"
                     ? "Describe your workflow..."
-                    : "Type a message..."
+                    : activeTool === "dev"
+                      ? "Review PR #42, create feature ticket, sprint summary..."
+                      : "Type a message..."
                 }
                 disabled={loading}
                 className="min-h-[60px] max-h-[200px] w-full pr-14 py-3 resize-none bg-muted/30 focus:bg-background transition-colors rounded-xl border-muted"

@@ -1,5 +1,6 @@
 "use client";
 
+import DevServiceSection from "./dev-service-section";
 import { useState, useEffect, useCallback } from "react";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -159,6 +160,9 @@ export function IntegrationsSection() {
 
   return (
     <div className="space-y-6">
+      {/* Developer Services (GitHub, Jira) */}
+      <DevServiceSection />
+
       {/* Hedy.ai Integration */}
       <Card className="overflow-hidden border-primary/10">
         <CardHeader className="bg-muted/30 pb-6 border-b">
