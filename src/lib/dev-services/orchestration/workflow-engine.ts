@@ -145,43 +145,85 @@ export async function executeWorkflow(
   const workflow = WORKFLOWS[workflowName];
   if (!workflow) throw new Error(`Unknown workflow: ${workflowName}`);
 
-  // ── Idempotency check ──────────────────────────────────────────────────────
-  // TODO(tech-debt): Replace check-then-insert with insert-on-conflict + poll for status=running
-  // to prevent duplicate execution when idempotency_key collides at exactly the same moment.
-  if (idempotencyKey) {
-    const { data: existing } = await supabaseAdmin
-      .from("chainthings_workflow_executions")
-      .select("step_results, status")
-      .eq("tenant_id", tenantId)
-      .eq("idempotency_key", idempotencyKey)
-      .maybeSingle();
+  // ── Idempotency + execution row creation (race-safe) ──────────────────────
+  let execId: string;
+  let wonRace = true;
 
-    if (existing) {
-      // Return cached result — don't re-run
-      return { steps: existing.step_results as WorkflowStepResult[] };
-    }
-  }
+  const insertPayload = {
+    tenant_id: tenantId,
+    dev_project_id: projectId ?? null,
+    idempotency_key: idempotencyKey ?? null,
+    workflow_name: workflowName,
+    input_params: inputParams,
+    status: "running",
+    step_results: [] as WorkflowStepResult[],
+  };
 
-  // ── Insert execution row ───────────────────────────────────────────────────
-  const { data: execRow, error: insertError } = await supabaseAdmin
+  const { data: inserted, error: insertError } = await supabaseAdmin
     .from("chainthings_workflow_executions")
-    .insert({
-      tenant_id: tenantId,
-      dev_project_id: projectId ?? null,
-      idempotency_key: idempotencyKey ?? null,
-      workflow_name: workflowName,
-      input_params: inputParams,
-      status: "running",
-      step_results: [],
-    })
+    .insert(insertPayload)
     .select("id")
     .single();
 
-  if (insertError || !execRow) {
-    throw new Error(`Failed to create workflow execution record: ${insertError?.message ?? "unknown"}`);
+  if (insertError) {
+    // 23505 = unique_violation on (tenant_id, idempotency_key)
+    if (insertError.code === "23505" && idempotencyKey) {
+      wonRace = false;
+      // Someone else inserted first — fetch their row and wait/return result
+      const { data: existing } = await supabaseAdmin
+        .from("chainthings_workflow_executions")
+        .select("id, status, step_results")
+        .eq("tenant_id", tenantId)
+        .eq("idempotency_key", idempotencyKey)
+        .single();
+
+      if (!existing) {
+        throw new Error("Concurrent insert detected but existing row vanished");
+      }
+
+      // If already terminal, return cached result
+      if (existing.status === "completed" || existing.status === "failed") {
+        return { steps: existing.step_results as WorkflowStepResult[] };
+      }
+
+      // Still running — poll every 1s up to 30s total
+      const pollStartMs = Date.now();
+      const POLL_TIMEOUT_MS = 30_000;
+      const POLL_INTERVAL_MS = 1_000;
+      while (Date.now() - pollStartMs < POLL_TIMEOUT_MS) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        const { data: polled } = await supabaseAdmin
+          .from("chainthings_workflow_executions")
+          .select("status, step_results")
+          .eq("id", existing.id)
+          .single();
+        if (!polled) continue;
+        if (polled.status === "completed" || polled.status === "failed") {
+          return { steps: polled.step_results as WorkflowStepResult[] };
+        }
+      }
+
+      // Timeout — winning runner may be stuck; return a "pending" indicator
+      // so the caller can retry or inspect the execution row directly
+      throw new Error(
+        `Workflow ${workflowName} execution in progress (idempotency_key=${idempotencyKey}). Retry later.`,
+      );
+    }
+
+    throw new Error(`Failed to create workflow execution record: ${insertError.message}`);
   }
 
-  const execId = execRow.id;
+  if (!inserted) {
+    throw new Error("Insert succeeded but returned no row");
+  }
+
+  execId = inserted.id;
+
+  // Only the winner continues to run the workflow steps below
+  if (!wonRace) {
+    // This branch should not be reachable given the returns above; guard for TS
+    return { steps: [] };
+  }
 
   // ── Run the workflow steps ─────────────────────────────────────────────────
   const ctx: StepContext = { input: inputParams as unknown as Record<string, unknown> };
