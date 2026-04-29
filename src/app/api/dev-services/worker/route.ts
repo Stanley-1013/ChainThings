@@ -1,6 +1,10 @@
 import { processEvent, processAllPending } from "@/lib/dev-services/event-worker";
 import { NextResponse } from "next/server";
 
+export async function GET(request: Request) {
+  return POST(request);
+}
+
 export async function POST(request: Request) {
   // Auth: CRON_SECRET required
   const auth = request.headers.get("authorization")?.replace("Bearer ", "");

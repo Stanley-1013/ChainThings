@@ -1,0 +1,68 @@
+name: Dev Services Cron
+
+# Backup cron for non-Vercel deployments. Vercel users can rely on
+# vercel.json; this workflow exists for self-hosted / Docker deployments
+# that still want a managed scheduler. Disable one of the two to avoid
+# duplicate execution if you migrate.
+
+on:
+  schedule:
+    # Worker: every minute. The endpoint is idempotent — empty queue
+    # returns {"processed":0} fast.
+    - cron: "* * * * *"
+    # Notifications generator: hourly. The endpoint itself filters by
+    # each user's local hour, so hourly is enough.
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which endpoint to fire"
+        required: true
+        default: worker
+        type: choice
+        options:
+          - worker
+          - notifications
+
+jobs:
+  worker:
+    name: dev-services worker
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '* * * * *' || github.event.inputs.target == 'worker'
+    steps:
+      - name: POST /api/dev-services/worker
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -e
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::APP_URL or CRON_SECRET secret missing"
+            exit 1
+          fi
+          curl -fsS -X POST "$APP_URL/api/dev-services/worker" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 30
+
+  notifications:
+    name: notifications generate
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 * * * *' || github.event.inputs.target == 'notifications'
+    steps:
+      - name: POST /api/notifications/generate
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -e
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::APP_URL or CRON_SECRET secret missing"
+            exit 1
+          fi
+          curl -fsS -X POST "$APP_URL/api/notifications/generate" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 60
