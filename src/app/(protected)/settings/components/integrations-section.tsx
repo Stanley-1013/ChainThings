@@ -19,6 +19,8 @@ import {
   ExternalLink,
   ShieldCheck,
   Zap,
+  XCircle,
+  PlugZap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +49,12 @@ export function IntegrationsSection() {
   const [deleting, setDeleting] = useState(false);
   const [backfillLoading, setBackfillLoading] = useState(false);
   const [backfillResult, setBackfillResult] = useState<{ imported: number; skipped: number; errors: number } | null>(null);
+  const [checkLoading, setCheckLoading] = useState(false);
+  const [checkResult, setCheckResult] = useState<
+    | { ok: true; user: { email: string | null; name: string | null } }
+    | { ok: false; error: string }
+    | null
+  >(null);
 
   const loadIntegrations = useCallback(async () => {
     try {
@@ -150,6 +158,31 @@ export function IntegrationsSection() {
     }
   }
 
+  async function checkHedyConnection() {
+    setCheckLoading(true);
+    setCheckResult(null);
+    try {
+      const res = await fetch("/api/integrations/hedy/check");
+      const json = await res.json();
+      if (json.ok) {
+        setCheckResult({
+          ok: true,
+          user: { email: json.user?.email ?? null, name: json.user?.name ?? null },
+        });
+        toast.success("Hedy connection verified");
+      } else {
+        setCheckResult({ ok: false, error: json.error || "Connection failed" });
+        toast.error(json.error || "Connection failed");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Connection check failed";
+      setCheckResult({ ok: false, error: message });
+      toast.error(message);
+    } finally {
+      setCheckLoading(false);
+    }
+  }
+
   async function backfillHedySessions() {
     setBackfillLoading(true);
     try {
@@ -237,6 +270,36 @@ export function IntegrationsSection() {
               <Info className="h-3 w-3" />
               Your key is encrypted and stored securely.
             </p>
+            {hedyIntegration && (
+              <div className="flex items-center gap-3 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={checkHedyConnection}
+                  disabled={checkLoading}
+                >
+                  {checkLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <PlugZap className="mr-2 h-4 w-4" />
+                  )}
+                  {checkLoading ? "Testing..." : "Test Connection"}
+                </Button>
+                {checkResult?.ok && (
+                  <span className="text-xs text-green-700 dark:text-green-400 flex items-center gap-1">
+                    <Check className="h-3.5 w-3.5" />
+                    Connected as {checkResult.user.email || checkResult.user.name || "Hedy user"}
+                  </span>
+                )}
+                {checkResult && !checkResult.ok && (
+                  <span className="text-xs text-destructive flex items-center gap-1">
+                    <XCircle className="h-3.5 w-3.5" />
+                    {checkResult.error}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <Separator />
