@@ -31,7 +31,7 @@ DOCKER_ENV_KEYS = \
 	AI_MEMORY_EXTRACTION \
 	JINA_API_KEY
 
-.PHONY: up down dev tunnel tunnel-app tunnel-stop status env-sync migrate build
+.PHONY: up down dev tunnel tunnel-app tunnel-stop status env-sync migrate build test-stack-up test-stack-down test-stack-reset test-stack-status
 
 # ─── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -219,3 +219,24 @@ status:
 		echo "  n8n:  not configured"; \
 	fi
 	@echo ""
+
+# ─── Integration test stack (Supabase CLI) ───────────────────────────────────
+# These are completely separate from the dev Supabase stack on lab_net.
+# CLI uses ports 54321 (api) / 54322 (db) — won't collide with dev (8000 / 5432).
+
+test-stack-up:
+	@if ! command -v supabase >/dev/null 2>&1; then \
+		echo "  ❌ supabase CLI not found. Install: brew install supabase/tap/supabase"; exit 1; \
+	fi
+	@echo "  🚀 Starting test Supabase stack (PG 15, no realtime/storage/studio/inbucket)..."
+	supabase start
+
+test-stack-down:
+	supabase stop
+
+test-stack-reset:
+	@echo "  ⚠️  This drops the test DB and re-applies all migrations."
+	supabase db reset
+
+test-stack-status:
+	@supabase status 2>/dev/null | head -20 || echo "  ❌ test stack not running"

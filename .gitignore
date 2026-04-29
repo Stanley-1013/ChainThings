@@ -43,3 +43,7 @@ next-env.d.ts
 
 # claude code scratch worktrees (each has its own .git/)
 .claude/worktrees/
+
+# supabase CLI scratch
+supabase/.temp/
+supabase/.branches/
