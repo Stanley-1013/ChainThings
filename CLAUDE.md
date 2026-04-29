@@ -260,3 +260,13 @@ npx vitest run --reporter=verbose  # 詳細輸出
 | 2026-03-13 | 文檔更新 | 更新 CLAUDE.md 反映新增模組、安全機制、測試策略、環境變數 |
 | 2026-03-16 | AI 閘道遷移 | 新增 `src/lib/ai-gateway/` 抽象層，支援 ZeroClaw（預設）和 OpenClaw（legacy），108 個測試全數通過 |
 | 2026-03-17 | RAG + 個人秘書 | 新增 pgvector RAG（混合搜索 + RRF）、助手記憶、AI 通知摘要、Meeting Notes 手動創建、嵌入管線；3 個 DB migrations（009-011）、7 個新 API 路由、Dashboard 通知面板 |
+
+## .context 项目上下文
+
+> 项目使用 `.context/` 管理开发决策上下文。
+
+- 编码规范：`.context/prefs/coding-style.md`
+- 工作流规则：`.context/prefs/workflow.md`
+- 决策历史：`.context/history/commits.md`
+
+**规则**：修改代码前必读 prefs/，做决策时按 workflow.md 规则记录日志。
