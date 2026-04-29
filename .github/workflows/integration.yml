@@ -1,0 +1,47 @@
+name: Integration Tests
+
+# Runs RLS / cross-tenant isolation tests against a real Supabase
+# stack started by the CLI. Separate from the unit-test job in ci.yml
+# so failures are easy to triage.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  rls:
+    name: RLS integration suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Supabase test stack
+        # First-run image pulls can take 60-90s on hosted runners.
+        run: supabase start
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          # Helpers/stack-config.ts falls back to CLI defaults if these
+          # are unset; setting them explicitly here documents the contract.
+          SUPABASE_TEST_URL: http://127.0.0.1:54321
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop
