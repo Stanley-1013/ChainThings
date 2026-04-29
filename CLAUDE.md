@@ -85,21 +85,30 @@ graph TD
 
 | 功能域 | 路徑 | 說明 |
 |--------|------|------|
-| 認證 | `src/app/(auth)/` | 登入、註冊、OAuth 回呼頁面 |
-| 受保護頁面 | `src/app/(protected)/` | Dashboard（含通知面板）、Chat（含 RAG）、Files、Workflows、Items（含新增頁）、Settings |
-| API 路由 | `src/app/api/` | 聊天（RAG 增強）、檔案上傳、工作流產生、整合管理、記憶 CRUD、通知系統、嵌入處理 |
-| Supabase 封裝 | `src/lib/supabase/` | 瀏覽器客戶端、伺服器端客戶端、admin 客戶端 |
+| 認證 | `src/app/(auth)/` | 登入、註冊、OAuth 回呼、忘記密碼、重設密碼 |
+| 受保護頁面 | `src/app/(protected)/` | Dashboard（含通知面板 + Task Center）、Chat（含 RAG）、Files、Workflows、Items（列表 + 新增 + 詳情）、Settings |
+| API 路由 | `src/app/api/` | 聊天（RAG 增強）、對話 CRUD、Profile、檔案上傳、工作流產生、整合管理、Hedy backfill/check/setup、Items + extract、Memory CRUD、Notifications + settings + generate、RAG embed、Dev Services（projects + actions + worker + OAuth + webhooks）|
+| Supabase 封裝 | `src/lib/supabase/` | 瀏覽器客戶端、伺服器端客戶端、admin 客戶端、cookie 名常數 |
 | AI 閘道 | `src/lib/ai-gateway/` | Provider-agnostic AI client（chat + embeddings），支援 ZeroClaw + OpenClaw |
+| Chat 客戶端 | `src/lib/chat/` | SSE 流式聊天客戶端封裝（取代舊版 fetch 模式） |
 | RAG 管線 | `src/lib/rag/` | 分塊策略（chunker）、混合搜索客戶端（search）、嵌入 Worker（worker） |
+| Items 提取 | `src/lib/items/` | 自由文字 → 結構化 items 的 AI 提取器 |
+| Memory 提取 | `src/lib/memory/` | 從對話中自動提取助手記憶條目 |
 | OpenClaw 客戶端 | `src/lib/openclaw/` | Deprecated re-export，指向 `ai-gateway` |
 | n8n 客戶端 | `src/lib/n8n/` | 工作流 CRUD（含超時）+ 節點類型白名單驗證 + Hedy webhook 範本 |
-| Webhook 端點 | `src/app/api/webhooks/` | Hedy webhook 接收端點，HMAC 簽章 + 時間戳防重放驗證 |
+| Hedy.ai 客戶端 | `src/lib/integrations/hedy/` | Hedy API client（types + client）：sessions/me/webhooks，含分頁、重試、區域路由（us/eu）|
+| Dev Services 整合 | `src/lib/dev-services/` | GitHub/GitLab/Jira 多服務抽象層：adapters（auth/normalizer/webhook）、orchestration（linker、triggers、workflow-engine）、engines（code-review、diff-parser、summary、test-generation）、approval、crypto、event-worker、factory |
+| Webhook 端點 | `src/app/api/webhooks/` | Hedy webhook 接收端點，HMAC 簽章 + 時間戳防重放驗證；Dev Services webhooks 在 `/api/dev-services/webhooks/[service]/[integrationId]` |
 | Items API | `src/app/api/items/` | 通用業務資料 CRUD API（列表 + 新增 + 單項 CRUD + AI 提取） |
 | Memory API | `src/app/api/memory/` | 助手記憶 CRUD API（列表、新增、刪除/歸檔） |
 | Notifications API | `src/app/api/notifications/` | 通知讀取/標記 + 設定 CRUD + 排程生成（支援 cron） |
+| Profile API | `src/app/api/profile/` | 使用者 profile 讀取與更新（display name 等） |
+| Conversations API | `src/app/api/conversations/[conversationId]/` | 對話更新（標題等）與刪除 |
 | RAG Embed API | `src/app/api/rag/embed/` | 嵌入隊列處理端點 |
-| 測試基礎設施 | `src/__tests__/` | Mock 工廠、測試輔助函式、全域 setup |
-| 資料庫遷移 | `supabase/migrations/` | 11 個增量遷移檔案（profiles -> notifications） |
+| Dev Services API | `src/app/api/dev-services/` | Dev projects CRUD/connect、actions（AI 跨服務動作）、worker（cron 觸發）、OAuth `[service]/{authorize,callback}`、webhooks `[service]/[integrationId]` |
+| 開發決策上下文 | `.context/` | `prefs/`（編碼規範 + 工作流規則，提交）、`history/commits.jsonl`（決策歸檔，提交）、`current/`（每分支 session.log，本地）|
+| 測試基礎設施 | `src/__tests__/` | Mock 工廠（supabase/n8n/openclaw）、e2e flows、helpers、全域 setup |
+| 資料庫遷移 | `supabase/migrations/` | 25 個增量遷移檔案（001 profiles → 025 workflow_executions） |
 | Docker 部署 | `Dockerfile`, `docker-compose.yml` | 多階段建置，連接外部服務網路 |
 
 ## 執行與開發
@@ -126,8 +135,12 @@ graph TD
 | `N8N_TIMEOUT_MS` | n8n API 請求超時（預設 10000ms） |
 | `N8N_WEBHOOK_URL` | n8n 公開 webhook URL（如 `https://n8n.yourdomain.com`） |
 | `NEXT_PUBLIC_APP_URL` | 應用公開 URL（預設 `http://localhost:3001`） |
-| `CHAINTHINGS_WEBHOOK_SECRET` | Webhook HMAC 簽章密鑰 |
-| `CRON_SECRET` | 內部 cron 排程端點驗證密鑰（通知生成） |
+| `CHAINTHINGS_WEBHOOK_SECRET` | Webhook HMAC 簽章密鑰（Hedy webhook fallback；個別整合可在 DB 用每租戶密鑰覆蓋） |
+| `CRON_SECRET` | 內部 cron 排程端點驗證密鑰（通知生成 + Dev Services worker） |
+| `HEDY_REGION` | Hedy.ai 區域：`us`（預設）或 `eu`，決定 API base URL |
+| `HEDY_TIMEOUT_MS` | Hedy API 請求超時（預設 30000ms） |
+| `DEV_SERVICE_ENCRYPTION_KEY` | Dev Services 第三方憑證（PAT、API token）AES 加密金鑰（32 bytes，base64） |
+| `SUPABASE_COOKIE_NAME` | Supabase auth cookie 名（預設 `sb-localhost-auth-token`） |
 
 ### 常用指令
 
@@ -152,6 +165,8 @@ docker compose up --build -d
 ### 資料庫遷移
 
 遷移檔案位於 `supabase/migrations/`，按編號順序執行：
+
+**核心結構（001–011）**
 1. `001_profiles.sql` — profiles 表 + 註冊觸發器 + RLS + tenant_id 輔助函式
 2. `002_conversations.sql` — 對話 + 訊息表 + RLS
 3. `003_files.sql` — 檔案中繼資料表 + RLS
@@ -164,36 +179,82 @@ docker compose up --build -d
 10. `010_assistant_memory.sql` — 助手記憶表 + RLS + 記憶自動嵌入觸發器
 11. `011_notifications.sql` — 通知設定表 + 通知快取表 + 唯一期間索引（防重複）+ RLS
 
+**強化 / 修補（012–020）**
+12. `012_notification_enhancements.sql` — 通知摘要欄位擴充
+13. `012_rag_search_tuning.sql` — RAG 混合搜索調整（RRF k 值）
+14. `013_workflow_error_message.sql` — workflow 表新增錯誤訊息欄位
+15. `014_memory_due_date.sql` — memory 表新增 due_date
+16. `015_webhook_per_tenant_secret.sql` — 每租戶 webhook secret（覆蓋全域 `CHAINTHINGS_WEBHOOK_SECRET`）
+17. `016_notification_perf_indexes.sql` — 通知查詢效能索引
+18. `017_jina_embedding_1024.sql` — 嵌入維度切換為 Jina 1024
+19. `018_rag_unify_rpc.sql` — RAG 搜索 RPC 統一介面
+20. `019_items_external_id_unique.sql` — items external_id 唯一索引（Hedy backfill 去重依賴）
+
+**Task Center + Dev Services（020–025）**
+21. `020_task_batch_fields.sql` — 任務批量操作欄位（reminder、completion_at）
+22. `021_dev_service_tables.sql` — Dev Services 整合表 + webhook events 隊列
+23. `022_dev_projects.sql` — Dev Projects 表（多服務聚合）
+24. `023_dev_service_fixes.sql` — Dev Services 修補（race-safe workflow）
+25. `024_approval_tokens.sql` — Dev Services AI 動作的人工審批 token
+26. `025_workflow_executions.sql` — 工作流執行歷史表
+
 ## 測試策略
 
-專案使用 **Vitest** 作為測試框架，目前有 **108 個測試**，全部通過。
+專案使用 **Vitest** 作為測試框架，目前有 **28 個測試檔案、213 個測試案例**，全部通過。
 
 ### 測試涵蓋範圍
 
-| API 路由 / 模組 | 測試檔案 | 測試數 |
-|-----------------|----------|--------|
+**API 路由**
+
+| 路由 | 測試檔案 | 測試數 |
+|------|----------|--------|
 | `/api/chat` | `route.test.ts` | 9 |
+| `/api/conversations/[conversationId]` | `route.test.ts` | 9 |
+| `/api/profile` | `route.test.ts` | 8 |
 | `/api/files/upload` | `route.test.ts` | 6 |
 | `/api/workflows/generate` | `route.test.ts` | 7 |
-| `/api/integrations` | `route.test.ts` | 13 |
-| `/api/integrations/hedy/setup` | `route.test.ts` | 14 |
+| `/api/integrations` | `route.test.ts` | 23 |
+| `/api/integrations/hedy/setup` | `route.test.ts` | 18 |
 | `/api/items` | `route.test.ts` | 6 |
 | `/api/items/[id]` | `route.test.ts` | 7 |
 | `/api/webhooks/hedy/[tenantId]` | `route.test.ts` | 7 |
 | `/api/auth/signout` | `route.test.ts` | 2 |
-| `lib/ai-gateway/client` | `client.test.ts` | 17 |
-| `lib/ai-gateway/providers` | `providers.test.ts` | 5 |
-| `lib/n8n/validation` | `validation.test.ts` | 6 |
-| `lib/n8n/templates/hedy-webhook` | `hedy-webhook.test.ts` | 7 |
-| `lib/openclaw/client` | `client.test.ts` | 1 |
+
+**lib/**
+
+| 模組 | 測試檔案 | 測試數 |
+|------|----------|--------|
+| `ai-gateway/client` | `client.test.ts` | 11 |
+| `ai-gateway/providers` | `providers.test.ts` | 8 |
+| `n8n/client` | `client.test.ts` | 12 |
+| `n8n/validation` | `validation.test.ts` | 6 |
+| `n8n/templates/hedy-webhook` | `hedy-webhook.test.ts` | 7 |
+| `openclaw/client` | `client.test.ts` | 1 |
+| `dev-services/crypto` | `crypto.test.ts` | 6 |
+| `dev-services/approval` | `approval.test.ts` | 10 |
+| `dev-services/adapters/github-normalizer` | `github-normalizer.test.ts` | 5 |
+| `dev-services/adapters/github-webhook` | `github-webhook.test.ts` | 7 |
+| `dev-services/adapters/jira-webhook` | `jira-webhook.test.ts` | 6 |
+| `dev-services/engines/diff-parser` | `diff-parser.test.ts` | 4 |
+| `dev-services/orchestration/linker` | `linker.test.ts` | 5 |
+| `dev-services/orchestration/workflow-engine` | `workflow-engine.test.ts` | 5 |
+| `chat/stream-client` | `stream-client.test.ts` | 5 |
+| `memory/extractor` | `extractor.test.ts` | 4 |
+
+**端對端**
+
+| 測試檔案 | 測試數 |
+|----------|--------|
+| `__tests__/e2e/api-flows.test.ts` | 9 |
 
 ### 測試基礎設施
 
 - `src/__tests__/setup.ts` — 全域 mock 設定（Supabase、AI Gateway、n8n）
-- `src/__tests__/mocks/supabase.ts` — Supabase 客戶端 mock 工廠
+- `src/__tests__/mocks/supabase.ts` — Supabase 客戶端 mock 工廠（支援 select/eq/is/in/single/maybeSingle/insert/update/upsert/delete chains）
 - `src/__tests__/mocks/n8n.ts` — n8n 工作流 mock
 - `src/__tests__/mocks/openclaw.ts` — AI Gateway mock（含 chat + embeddings）
 - `src/__tests__/helpers.ts` — 測試輔助函式
+- `src/__tests__/e2e/` — 端對端 API flow 測試（多 endpoint 串接）
 
 ### 執行測試
 
@@ -204,13 +265,15 @@ npx vitest run --reporter=verbose  # 詳細輸出
 
 ### 待補充
 
-- Supabase RLS 策略測試（含 RAG 跨租戶隔離驗證）
-- RAG 管線單元測試（chunker、worker、search）
-- 通知系統 API 路由測試
-- Memory API 路由測試
-- Items POST / extract 路由測試
-- 中介軟體認證邏輯測試
-- 端對端測試
+- Supabase RLS 策略測試（含 RAG 跨租戶隔離驗證 — 需實機 Supabase）
+- RAG 管線單元測試（`lib/rag/{chunker,worker,search}`）
+- 中介軟體認證邏輯測試（`src/middleware.ts`）
+- Notifications API 路由測試（`/api/notifications`、`/settings`、`/generate`）
+- Memory API 路由測試（`/api/memory`）
+- Items extract API 測試（`/api/items/extract`）
+- RAG embed API 測試（`/api/rag/embed`）
+- Dev Services 路由測試（`/api/dev-services/{actions,worker,projects,*/authorize,*/callback,webhooks/*}`）
+- Hedy backfill / check API 測試（`/api/integrations/hedy/{backfill,check}`）
 
 ## 編碼規範
 
@@ -260,6 +323,8 @@ npx vitest run --reporter=verbose  # 詳細輸出
 | 2026-03-13 | 文檔更新 | 更新 CLAUDE.md 反映新增模組、安全機制、測試策略、環境變數 |
 | 2026-03-16 | AI 閘道遷移 | 新增 `src/lib/ai-gateway/` 抽象層，支援 ZeroClaw（預設）和 OpenClaw（legacy），108 個測試全數通過 |
 | 2026-03-17 | RAG + 個人秘書 | 新增 pgvector RAG（混合搜索 + RRF）、助手記憶、AI 通知摘要、Meeting Notes 手動創建、嵌入管線；3 個 DB migrations（009-011）、7 個新 API 路由、Dashboard 通知面板 |
+| 2026-04-22 | Task Center + Dev Services | 新增任務中心（批量勾選/刪除/設提醒/標完成）、GitHub/GitLab/Jira 多服務整合（OAuth + PAT + 加密憑證）、Dev Projects 聚合層、AI 跨服務動作 + 人工審批 token、race-safe 工作流 worker（cron 觸發）；6 個 DB migrations（020-025）、9 個新 API 路由 |
+| 2026-04-29 | Hedy backfill + 重設密碼 + 開發決策上下文 | 新增 Hedy 歷史會議回填（一鍵 backfill + connection check）、Hedy API client lib（types + client，含分頁/重試/區域路由）、忘記密碼 + 重設密碼頁、`.context/` 開發決策歸檔基礎設施（commits.jsonl + prefs/）、修補 `/api/integrations` partial unique index 上的 upsert bug 與 Hedy 自然語言 dueDate 處理 |
 
 ## .context 项目上下文
 
