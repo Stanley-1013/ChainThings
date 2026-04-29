@@ -24,23 +24,15 @@ function setupClient(tableOverrides?: Record<string, { data: unknown; error: unk
 
     const override = tableOverrides?.[table];
     if (override) {
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            order: vi.fn(() => override),
-            single: vi.fn(() => override),
-          })),
-        })),
-        insert: vi.fn(() => override),
-        upsert: vi.fn(() => ({
-          select: vi.fn(() => ({
-            single: vi.fn(() => override),
-          })),
-        })),
-        delete: vi.fn(() => ({
-          eq: vi.fn(() => override),
-        })),
-      } as never;
+      // Build a deeply chainable mock that supports any method ordering
+      const makeChain = (): Record<string, ReturnType<typeof vi.fn>> => {
+        const c: Record<string, ReturnType<typeof vi.fn>> = {};
+        for (const m of ["select", "eq", "is", "in", "single", "maybeSingle", "order", "limit", "insert", "update", "delete", "upsert"]) {
+          c[m] = vi.fn(() => ({ ...c, ...override }));
+        }
+        return c;
+      };
+      return makeChain() as never;
     }
 
     return {} as never;

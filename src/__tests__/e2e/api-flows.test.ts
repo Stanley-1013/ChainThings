@@ -94,6 +94,13 @@ function createE2EClient(db: MockDB) {
           return createQuery(filtered);
         });
 
+        q.is = vi.fn((field: string, value: unknown) => {
+          const next = filtered.filter((r) =>
+            value === null ? (r[field] === null || r[field] === undefined) : r[field] === value
+          );
+          return createQuery(next);
+        });
+
         q.order = vi.fn(() => createQuery(filtered));
         q.range = vi.fn((_from: number, _to: number) => createQuery(filtered.slice(_from, _to + 1)));
         q.limit = vi.fn((_n: number) => createQuery(filtered.slice(0, _n)));

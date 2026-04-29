@@ -45,6 +45,8 @@ export function IntegrationsSection() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [integrationToDelete, setIntegrationToDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [backfillLoading, setBackfillLoading] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<{ imported: number; skipped: number; errors: number } | null>(null);
 
   const loadIntegrations = useCallback(async () => {
     try {
@@ -145,6 +147,21 @@ export function IntegrationsSection() {
       setDeleting(false);
       setDeleteDialogOpen(false);
       setIntegrationToDelete(null);
+    }
+  }
+
+  async function backfillHedySessions() {
+    setBackfillLoading(true);
+    try {
+      const res = await fetch("/api/integrations/hedy/backfill", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Backfill failed");
+      setBackfillResult(json.data);
+      toast.success(`Imported ${json.data.imported} sessions`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Backfill failed");
+    } finally {
+      setBackfillLoading(false);
     }
   }
 
@@ -251,6 +268,41 @@ export function IntegrationsSection() {
               </Button>
             </div>
           </div>
+
+          {/* Step 3: Backfill Historical Sessions */}
+          {hedyIntegration && (
+            <>
+              <Separator />
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Badge variant="outline" className="h-5 w-5 rounded-full p-0 flex items-center justify-center border-primary text-primary">3</Badge>
+                  <Label>Backfill Historical Sessions</Label>
+                </div>
+                <div className="bg-muted/20 border rounded-lg p-4 space-y-4">
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    Pull all past meeting notes from Hedy.ai into your workspace. Already imported sessions will be skipped.
+                  </p>
+                  <Button
+                    onClick={backfillHedySessions}
+                    disabled={!hedyIntegration || backfillLoading}
+                  >
+                    {backfillLoading ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Zap className="mr-2 h-4 w-4" />
+                    )}
+                    {backfillLoading ? "Backfilling..." : "Backfill Sessions"}
+                  </Button>
+                  {backfillResult && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Check className="h-4 w-4 text-green-600 shrink-0" />
+                      Imported {backfillResult.imported} sessions, skipped {backfillResult.skipped}, errors {backfillResult.errors}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Webhook URL Result */}
           {webhookUrl && (

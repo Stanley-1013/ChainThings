@@ -5,6 +5,14 @@ import { createHmac, timingSafeEqual } from "crypto";
 
 const TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
 
+/** Validate dueDate — Hedy may return natural language like "next week". */
+function parseValidDate(dueDate: string | undefined): string | undefined {
+  if (!dueDate) return undefined;
+  const d = new Date(dueDate);
+  if (isNaN(d.getTime())) return undefined;
+  return d.toISOString();
+}
+
 // Hedy webhook event types (from official API docs)
 // session.created — minimal stub, no content yet
 // session.ended — full session with transcript, recap, todos, highlights
@@ -162,7 +170,7 @@ export async function POST(
         category: "task",
         content: todoText,
         importance: 7,
-        ...(todoDueDate ? { due_date: todoDueDate } : {}),
+        ...(parseValidDate(todoDueDate) ? { due_date: parseValidDate(todoDueDate) } : {}),
       };
       if (sourceId) {
         insertData.source_type = "item";
@@ -392,7 +400,7 @@ async function upsertActionItems(
       importance: 7,
       source_type: "item",
       source_id: itemId,
-      ...(a.dueDate ? { due_date: a.dueDate } : {}),
+      ...(parseValidDate(a.dueDate) ? { due_date: parseValidDate(a.dueDate) } : {}),
     }))
   );
 }

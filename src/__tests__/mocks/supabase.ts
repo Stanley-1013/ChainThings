@@ -27,7 +27,7 @@ function createChainMock(resolveData: unknown = null, resolveError: unknown = nu
   const result = { data: resolveData, error: resolveError };
   const chain: Record<string, ReturnType<typeof vi.fn>> = {};
 
-  const methods = ["select", "eq", "single", "order", "limit", "insert", "upsert", "update", "delete"];
+  const methods = ["select", "eq", "is", "in", "single", "maybeSingle", "order", "limit", "insert", "upsert", "update", "delete"];
   for (const method of methods) {
     chain[method] = vi.fn(() => ({ ...chain, ...result }));
   }

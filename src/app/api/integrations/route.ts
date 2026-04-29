@@ -92,20 +92,43 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "config must be a plain object" }, { status: 400 });
   }
 
-  const { data, error } = await supabase
+  // Check for existing integration (partial unique index doesn't support onConflict)
+  const { data: existing } = await supabase
     .from("chainthings_integrations")
-    .upsert(
-      {
+    .select("id, config")
+    .eq("tenant_id", profile.tenant_id)
+    .eq("service", service)
+    .is("dev_project_id", null)
+    .maybeSingle();
+
+  let data, error;
+  if (existing) {
+    // Merge config to preserve fields like n8n_workflow_id when only updating api_key
+    const mergedConfig = { ...(existing.config as Record<string, unknown> ?? {}), ...(config as Record<string, unknown> ?? {}) };
+    ({ data, error } = await supabase
+      .from("chainthings_integrations")
+      .update({
+        label: label || service,
+        config: mergedConfig,
+        enabled: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id)
+      .select()
+      .single());
+  } else {
+    ({ data, error } = await supabase
+      .from("chainthings_integrations")
+      .insert({
         tenant_id: profile.tenant_id,
         service,
         label: label || service,
         config: config || {},
         enabled: true,
-      },
-      { onConflict: "tenant_id,service" }
-    )
-    .select()
-    .single();
+      })
+      .select()
+      .single());
+  }
 
   if (error) {
     console.error("Integrations API error:", error.message);
