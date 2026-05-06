@@ -111,9 +111,11 @@ port = 54324
 # sender_name = "Admin"
 
 [storage]
-# Disabled for ChainThings test stack — storage.objects RLS testing is out of scope (follow-up).
-# Migration 005 creates a storage bucket which will fail-soft when storage is disabled.
-enabled = false
+# Enabled so storage-api applies its baseline schema migrations (adds `public` column to
+# storage.buckets). Migration 005_storage.sql depends on that column when seeding the
+# chainthings-uploads bucket. Storage RLS itself is out of scope for our integration suite,
+# but mirroring dev/prod here keeps migrations consistent.
+enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 

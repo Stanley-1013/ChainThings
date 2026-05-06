@@ -1,4 +1,11 @@
 -- ChainThings: RAG hybrid search tuning - mode-aware search with configurable fan-out
+--
+-- FILENAME NOTE: Renamed from 012_rag_search_tuning.sql on 2026-05-06 to avoid
+-- CLI primary-key collision with 012_notification_enhancements.sql. The Supabase
+-- CLI extracts the numeric prefix as a primary key for supabase_migrations.schema_migrations;
+-- two files sharing the prefix "012" would collide. The new prefix "0119" sorts
+-- lexically between "011" and "012", preserving the original apply order.
+-- See docs/ops/integration-tests.md for full backstory.
 
 create or replace function public.chainthings_rag_hybrid_search(
   query_embedding vector(1536),
