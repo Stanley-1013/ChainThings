@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Github, GitBranch, Loader2, Trash2, Plus, ChevronDown, ChevronRight, Copy, Check, AlertCircle, Settings2, Webhook, ExternalLink } from "lucide-react";
+import Link from "next/link";
+import { Github, GitBranch, Loader2, Trash2, Plus, ChevronDown, ChevronRight, Copy, Check, AlertCircle, Settings2, Webhook, ExternalLink, ArrowUpRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,13 +28,14 @@ type ServiceType = "github" | "gitlab" | "jira";
 interface ConnectForm {
   service: ServiceType; label: string;
   jira_domain: string; jira_email: string; api_token: string; jira_projects: string;
+  status_mapping_opened: string; status_mapping_merged: string;
   access_token: string; auto_review_enabled: boolean; auto_review_repos: string; review_language: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const emptyProject = (): ProjectForm => ({ name: "", description: "", context_notes: "", default_repo_ref: "", default_jira_project: "" });
-const emptyConnect = (): ConnectForm => ({ service: "github", label: "", jira_domain: "", jira_email: "", api_token: "", jira_projects: "", access_token: "", auto_review_enabled: false, auto_review_repos: "", review_language: "en" });
+const emptyConnect = (): ConnectForm => ({ service: "github", label: "", jira_domain: "", jira_email: "", api_token: "", jira_projects: "", status_mapping_opened: "", status_mapping_merged: "", access_token: "", auto_review_enabled: false, auto_review_repos: "", review_language: "en" });
 const svcColor = (s: string) => s === "github" ? "bg-zinc-900 text-white" : s === "gitlab" ? "bg-orange-600 text-white" : "bg-blue-600 text-white";
 
 function SvcIcon({ s }: { s: string }) {
@@ -129,6 +131,10 @@ function ConnectDialog({ projectId, open, onOpenChange, onSuccess }: { projectId
       if (form.service === "jira") {
         Object.assign(body, { jira_domain: form.jira_domain, jira_email: form.jira_email, api_token: form.api_token });
         if (form.jira_projects.trim()) body.jira_projects = form.jira_projects.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+        const statusMapping: { mr_opened?: string; mr_merged?: string } = {};
+        if (form.status_mapping_opened.trim()) statusMapping.mr_opened = form.status_mapping_opened.trim();
+        if (form.status_mapping_merged.trim()) statusMapping.mr_merged = form.status_mapping_merged.trim();
+        body.status_mapping = statusMapping;
       } else {
         body.access_token = form.access_token;
       }
@@ -185,6 +191,20 @@ function ConnectDialog({ projectId, open, onOpenChange, onSuccess }: { projectId
                 <div className="space-y-1.5">
                   <Label htmlFor="cf-jprojs">Jira Projects <span className="font-normal text-muted-foreground">(comma-separated)</span></Label>
                   <Input id="cf-jprojs" placeholder="ALPHA, BETA" value={form.jira_projects} onChange={e => patch({ jira_projects: e.target.value })} />
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3 space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Jira Status Mapping</p>
+                  <p className="text-[11px] text-muted-foreground">Jira workflow status names. Leave blank to use defaults.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cf-sm-opened" className="text-xs">Status when PR opened</Label>
+                      <Input id="cf-sm-opened" className="h-8 text-xs" placeholder="In Review" maxLength={100} value={form.status_mapping_opened} onChange={e => patch({ status_mapping_opened: e.target.value })} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cf-sm-merged" className="text-xs">Status when PR merged</Label>
+                      <Input id="cf-sm-merged" className="h-8 text-xs" placeholder="Done" maxLength={100} value={form.status_mapping_merged} onChange={e => patch({ status_mapping_merged: e.target.value })} />
+                    </div>
+                  </div>
                 </div>
               </>)}
               {(form.service === "github" || form.service === "gitlab") && (
@@ -315,6 +335,9 @@ function ProjectCard({ project, onEdit, onDelete, onRefresh }: { project: DevPro
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <Button asChild size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={e => e.stopPropagation()}>
+            <Link href={`/dev-projects/${project.id}`}>Open <ArrowUpRight className="h-3 w-3" /></Link>
+          </Button>
           <Button size="icon" variant="ghost" className="h-7 w-7" onClick={e => { e.stopPropagation(); onEdit(project); }}><Settings2 className="h-3.5 w-3.5" /></Button>
           <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={e => { e.stopPropagation(); onDelete(project); }}><Trash2 className="h-3.5 w-3.5" /></Button>
           {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
