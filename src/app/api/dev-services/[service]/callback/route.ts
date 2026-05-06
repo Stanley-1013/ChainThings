@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getCredentialStrategy } from "@/lib/dev-services/credential-registry";
 import { encryptSecretConfig } from "@/lib/dev-services/crypto";
 import type { DevServiceSecretConfig } from "@/lib/dev-services/types";
+import { publicOrigin, publicUrl } from "@/lib/request-url";
 import { createHmac } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -18,7 +19,7 @@ export async function GET(
   const stateParam = url.searchParams.get("state");
 
   if (!code || !stateParam) {
-    return NextResponse.redirect(new URL("/settings?error=missing_params", request.url));
+    return NextResponse.redirect(publicUrl(request, "/settings?error=missing_params"));
   }
 
   // Verify state
@@ -27,34 +28,34 @@ export async function GET(
   cookieStore.delete(STATE_COOKIE);
 
   if (!stateCookie || stateCookie !== stateParam) {
-    return NextResponse.redirect(new URL("/settings?error=invalid_state", request.url));
+    return NextResponse.redirect(publicUrl(request, "/settings?error=invalid_state"));
   }
 
   const parts = stateParam.split(":");
   if (parts.length !== 4) {
-    return NextResponse.redirect(new URL("/settings?error=malformed_state", request.url));
+    return NextResponse.redirect(publicUrl(request, "/settings?error=malformed_state"));
   }
 
   const [tenantId, stateService, _nonce, sig] = parts;
   if (stateService !== service) {
-    return NextResponse.redirect(new URL("/settings?error=service_mismatch", request.url));
+    return NextResponse.redirect(publicUrl(request, "/settings?error=service_mismatch"));
   }
 
   // Verify HMAC
   const secret = process.env.CHAINTHINGS_WEBHOOK_SECRET;
   if (!secret || secret.length < 32) {
-    return NextResponse.redirect(new URL("/settings?error=server_misconfiguration", request.url));
+    return NextResponse.redirect(publicUrl(request, "/settings?error=server_misconfiguration"));
   }
   const payload = `${tenantId}:${stateService}:${_nonce}`;
   const expectedSig = createHmac("sha256", secret).update(payload).digest("hex");
   if (sig !== expectedSig) {
-    return NextResponse.redirect(new URL("/settings?error=invalid_signature", request.url));
+    return NextResponse.redirect(publicUrl(request, "/settings?error=invalid_signature"));
   }
 
   // Exchange code for token
   const strategy = getCredentialStrategy(service);
   if (!strategy?.exchangeCodeForToken) {
-    return NextResponse.redirect(new URL("/settings?error=unsupported", request.url));
+    return NextResponse.redirect(publicUrl(request, "/settings?error=unsupported"));
   }
 
   try {
@@ -123,7 +124,7 @@ export async function GET(
 
       if (updateError) {
         console.error(`OAuth callback update error for ${service}:`, updateError.message);
-        return NextResponse.redirect(new URL("/settings?error=db_error", request.url));
+        return NextResponse.redirect(publicUrl(request, "/settings?error=db_error"));
       }
     } else {
       const { error: insertError } = await supabaseAdmin
@@ -132,19 +133,19 @@ export async function GET(
 
       if (insertError) {
         console.error(`OAuth callback insert error for ${service}:`, insertError.message);
-        return NextResponse.redirect(new URL("/settings?error=db_error", request.url));
+        return NextResponse.redirect(publicUrl(request, "/settings?error=db_error"));
       }
     }
 
     // Fallback to current request URL base if NEXT_PUBLIC_APP_URL is not set
     const appUrl = process.env.NEXT_PUBLIC_APP_URL
-      ?? new URL("/", request.url).origin;
+      ?? publicOrigin(request);
 
     return NextResponse.redirect(
       `${appUrl}/settings?tab=integrations&service=${service}&status=connected`,
     );
   } catch (err) {
     console.error(`OAuth callback failed for ${service}:`, err);
-    return NextResponse.redirect(new URL("/settings?error=token_exchange_failed", request.url));
+    return NextResponse.redirect(publicUrl(request, "/settings?error=token_exchange_failed"));
   }
 }
