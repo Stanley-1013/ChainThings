@@ -309,6 +309,81 @@ describe("/api/dev-services/projects/[projectId]/connect", () => {
     );
   });
 
+  it("should write status_mapping into jira config when provided", async () => {
+    const { update } = setupAdmin({
+      existing: { id: "integration-existing" },
+      integration: {
+        id: "integration-existing",
+        service: "jira",
+        label: "Jira",
+        config: { external_user_id: "jira-user" },
+        capabilities: ["issues", "summary", "transitions"],
+        status: "active",
+      },
+    });
+    const request = createJsonRequest("http://localhost/api/dev-services/projects/project-1/connect", {
+      service: "jira",
+      label: "Jira",
+      jira_domain: "example.atlassian.net",
+      jira_email: "dev@example.com",
+      api_token: "jira-token",
+      jira_projects: ["PLAT"],
+      status_mapping: { mr_opened: "In Review", mr_merged: "Done" },
+    });
+
+    const response = await POST(request, projectParams());
+    expect(response.status).toBe(200);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          jira: {
+            domain: "example.atlassian.net",
+            email: "dev@example.com",
+            projects: ["PLAT"],
+            status_mapping: { mr_opened: "In Review", mr_merged: "Done" },
+          },
+        }),
+      }),
+    );
+  });
+
+  it("should use empty status_mapping when status_mapping is not provided", async () => {
+    const { insert } = setupAdmin();
+    const request = createJsonRequest("http://localhost/api/dev-services/projects/project-1/connect", {
+      service: "jira",
+      jira_domain: "example.atlassian.net",
+      jira_email: "dev@example.com",
+      api_token: "jira-token",
+    });
+
+    const response = await POST(request, projectParams());
+    expect(response.status).toBe(200);
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          jira: expect.objectContaining({
+            status_mapping: {},
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("should reject status_mapping with value exceeding 100 characters", async () => {
+    const request = createJsonRequest("http://localhost/api/dev-services/projects/project-1/connect", {
+      service: "jira",
+      jira_domain: "example.atlassian.net",
+      jira_email: "dev@example.com",
+      api_token: "jira-token",
+      status_mapping: { mr_opened: "x".repeat(101) },
+    });
+
+    const response = await POST(request, projectParams());
+    const body = await getJsonResponse(response);
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/status_mapping\.mr_opened/);
+  });
+
   it("should reject invalid credentials before writing an integration", async () => {
     const { insert, update } = setupAdmin();
     mockGitHubClient.mockImplementation(function GitHubClientMock() {

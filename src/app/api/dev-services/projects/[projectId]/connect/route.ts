@@ -71,6 +71,7 @@ export async function POST(
     auto_review_repos,
     review_language,
     jira_projects,
+    status_mapping,
   } = body as {
     service?: string;
     label?: string;
@@ -82,7 +83,27 @@ export async function POST(
     auto_review_repos?: string[];
     review_language?: string;
     jira_projects?: string[];
+    status_mapping?: { mr_opened?: string; mr_merged?: string };
   };
+
+  // Validate status_mapping if provided
+  if (status_mapping !== undefined) {
+    if (typeof status_mapping !== "object" || Array.isArray(status_mapping)) {
+      return NextResponse.json({ error: "status_mapping must be an object" }, { status: 400 });
+    }
+    if (
+      status_mapping.mr_opened !== undefined &&
+      (typeof status_mapping.mr_opened !== "string" || status_mapping.mr_opened.length > 100)
+    ) {
+      return NextResponse.json({ error: "status_mapping.mr_opened must be a string of at most 100 characters" }, { status: 400 });
+    }
+    if (
+      status_mapping.mr_merged !== undefined &&
+      (typeof status_mapping.mr_merged !== "string" || status_mapping.mr_merged.length > 100)
+    ) {
+      return NextResponse.json({ error: "status_mapping.mr_merged must be a string of at most 100 characters" }, { status: 400 });
+    }
+  }
 
   // ── Validate service ──────────────────────────────────────────────────────
   if (!service || !(VALID_SERVICES as readonly string[]).includes(service)) {
@@ -108,11 +129,15 @@ export async function POST(
         { status: 400 },
       );
     }
+    const resolvedStatusMapping: { mr_opened?: string; mr_merged?: string } = {};
+    if (status_mapping?.mr_opened) resolvedStatusMapping.mr_opened = status_mapping.mr_opened;
+    if (status_mapping?.mr_merged) resolvedStatusMapping.mr_merged = status_mapping.mr_merged;
+
     publicConfig.jira = {
       domain: jira_domain,
       email: jira_email,
       projects: jira_projects ?? [],
-      status_mapping: {},
+      status_mapping: resolvedStatusMapping,
     };
   }
 

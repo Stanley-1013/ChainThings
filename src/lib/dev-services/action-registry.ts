@@ -70,6 +70,12 @@ const executeWorkflowSchema = z.object({
   params: z.record(z.string().max(200), z.unknown()),
 });
 
+const syncPrToJiraSchema = z.object({
+  repoRef: z.string().min(1).max(200),
+  prRef: z.string().min(1).max(50),
+  event: z.enum(["mr_opened", "mr_merged"]),
+});
+
 // ── Action Handlers ───────────────────────────────────────
 
 const actionRegistry: Record<string, ActionDef> = {
@@ -227,6 +233,48 @@ const actionRegistry: Record<string, ActionDef> = {
         params.params as Record<string, string>,
         projectId,
         idempotencyKey,
+      );
+    },
+  },
+
+  sync_pr_to_jira: {
+    name: "sync_pr_to_jira",
+    requiredCapability: "branches",
+    inputSchema: syncPrToJiraSchema,
+    requiresApproval: false,
+    handler: async (client, tenantId, projectId, params) => {
+      const host = client.asCodeHost?.();
+      if (!host) throw new Error("Code host not available");
+
+      const mr = await host.getMergeRequest(
+        params.repoRef as string,
+        params.prRef as string,
+      );
+
+      // Resolve the integration ID from the DB so we can scope the service link correctly.
+      const { supabaseAdmin } = await import("@/lib/supabase/admin");
+      const { data: integration } = await supabaseAdmin
+        .from("chainthings_integrations")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("dev_project_id", projectId)
+        .eq("service", client.service)
+        .maybeSingle();
+
+      const integrationId: string = integration?.id ?? "";
+
+      const { processMREvent } = await import("./orchestration/linker");
+      return processMREvent(
+        tenantId,
+        client.service,
+        integrationId,
+        params.prRef as string,
+        mr.url,
+        mr.title,
+        // MergeRequest has no body field — pass empty string; branch carries the ticket ref
+        "",
+        mr.sourceBranch,
+        params.event as "mr_opened" | "mr_merged",
       );
     },
   },
