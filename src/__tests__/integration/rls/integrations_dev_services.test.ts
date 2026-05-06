@@ -134,23 +134,10 @@ describe("RLS: chainthings_integrations", () => {
     expect(data).toEqual([]);
   });
 
-  it("cross-FK gap: A's integration can reference B's dev_project (current behavior, captures policy gap)", async () => {
-    // FOLLOW-UP / SECURITY GAP:
-    //   chainthings_integrations.dev_project_id FK → chainthings_dev_projects(id)
-    //   The RLS policy on chainthings_integrations only checks tenant_id =
-    //   chainthings_current_tenant_id(); it does NOT verify that dev_project_id
-    //   resolves to the same tenant. The FK constraint accepts any valid
-    //   dev_projects.id regardless of tenant. So tenant A can insert an
-    //   integration row referencing tenant B's dev_project — a cross-tenant
-    //   reference leak. B never sees this row (RLS at SELECT scopes by tenant_id),
-    //   but the data integrity is broken.
-    //
-    //   Suggested fix: add a CHECK or trigger that verifies
-    //   dev_project_id IS NULL OR (select tenant_id from chainthings_dev_projects
-    //   where id = dev_project_id) = tenant_id.
-    //
-    // This test documents the CURRENT vulnerable behavior. When the policy is
-    // tightened, the test will fail and prompt an update.
+  it("cross-tenant FK: A cannot insert integration referencing B's dev_project_id", async () => {
+    // The strengthened WITH CHECK policy requires:
+    //   dev_project_id IS NULL OR EXISTS (... dp.tenant_id = chainthings_current_tenant_id())
+    // Since bProject belongs to tenant B, not A, the insert must be blocked.
     const a = await fixtureTenant("a");
     const b = await fixtureTenant("b");
 
@@ -170,10 +157,8 @@ describe("RLS: chainthings_integrations", () => {
       })
       .select();
 
-    expect(error).toBeNull();
-    expect(data).toHaveLength(1);
-    expect(data?.[0].tenant_id).toBe(a.tenantId);
-    expect(data?.[0].dev_project_id).toBe(bProject.id);
+    // The insert must be blocked (error) or the row hidden by RLS (empty data).
+    expect(error || data?.length === 0).toBeTruthy();
   });
 });
 

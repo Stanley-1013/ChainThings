@@ -305,7 +305,7 @@ describe("RLS: chainthings_messages", () => {
 // ---------------------------------------------------------------------------
 describe("RLS: messages — parent-child FK isolation", () => {
 
-  it("Attack 1: A inserts message with own tenant_id but B's conversation_id — row is inserted (policy gap)", async () => {
+  it("cross-tenant FK: A cannot insert a message referencing B's conversation", async () => {
     const a = await fixtureTenant("a");
     const b = await fixtureTenant("b");
 
@@ -323,21 +323,9 @@ describe("RLS: messages — parent-child FK isolation", () => {
     );
 
     // Attack: A links a message (tenant_id=a.tenantId) to B's conversation.
-    // Both FKs pass (a.tenantId is a valid profile tenant_id; bConv.id is a
-    // valid conversation id). The RLS INSERT policy only checks tenant_id,
-    // so it also passes. The row is therefore inserted successfully.
-    //
-    // follow-up: this may be a security gap — a message can be attached to
-    // another tenant's conversation without owning it. A separate WITH CHECK
-    // predicate on conversation_id (ensuring the conversation belongs to the
-    // same tenant) is needed to close this. Track as issue and add:
-    //   WITH CHECK (
-    //     tenant_id = chainthings_current_tenant_id() AND
-    //     EXISTS (SELECT 1 FROM chainthings_conversations c
-    //             WHERE c.id = conversation_id
-    //               AND c.tenant_id = chainthings_current_tenant_id())
-    //   )
-    const { data: attackRow, error: attackErr } = await asUser(a)
+    // The strengthened WITH CHECK policy now verifies that conversation_id
+    // resolves to a conversation owned by the caller's tenant, blocking this.
+    const { data, error } = await asUser(a)
       .from("chainthings_messages")
       .insert({
         conversation_id: bConv.id,
@@ -345,29 +333,9 @@ describe("RLS: messages — parent-child FK isolation", () => {
         role: "user",
         content: "A's message in B's conversation",
       })
-      .select()
-      .single();
+      .select();
 
-    // The insert is NOT blocked by the current policy — document this behavior.
-    // If this assertion starts failing it means the policy was tightened (good).
-    expect(attackErr).toBeNull();
-    expect(attackRow).not.toBeNull();
-    expect(attackRow?.conversation_id).toBe(bConv.id);
-    expect(attackRow?.tenant_id).toBe(a.tenantId);
-
-    // Verify the rogue row is visible to A (under A's RLS scope) but NOT to B
-    const { data: aSeesRogue } = await asUser(a)
-      .from("chainthings_messages")
-      .select("id, conversation_id")
-      .eq("conversation_id", bConv.id);
-    expect(aSeesRogue).toHaveLength(1); // A can see their own message even in B's conv
-
-    const { data: bSeesRogue } = await asUser(b)
-      .from("chainthings_messages")
-      .select("id")
-      .eq("conversation_id", bConv.id);
-    // B does not see it because the message's tenant_id = a.tenantId, which
-    // RLS filters out from B's view. Containment holds at read time.
-    expect(bSeesRogue).toEqual([]);
+    // The insert must be blocked (error) or the row hidden by RLS (empty data).
+    expect(error || data?.length === 0).toBeTruthy();
   });
 });

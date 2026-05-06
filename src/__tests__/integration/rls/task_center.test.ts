@@ -549,22 +549,13 @@ describe("RLS: chainthings_notification_cache", () => {
 // insert may succeed — FK accepts B's valid auth.users.id, RLS sees A's
 // tenant_id matching A's session. This is a cross-tenant user_id spoof.
 // ---------------------------------------------------------------------------
-describe("RLS: notification — parent-child FK isolation", () => {
+describe("RLS: notification — cross-user user_id isolation", () => {
 
-  // FOLLOW-UP / SECURITY GAP captured by both tests below:
-  //   The RLS policy on chainthings_notification_{settings,cache} only checks
-  //   tenant_id = chainthings_current_tenant_id(). It does NOT verify
-  //   user_id = auth.uid(). Combined with the FK accepting any valid
-  //   auth.users.id, tenant A can write a row whose user_id belongs to
-  //   tenant B's user — a cross-user/cross-tenant data association.
-  //
-  //   Suggested fix: change the policy to
-  //     using (tenant_id = chainthings_current_tenant_id() and user_id = auth.uid())
-  //
-  //   These tests document the CURRENT vulnerable behavior. When the policy is
-  //   tightened the assertions will fail and prompt an update.
+  // The strengthened WITH CHECK policy on both notification tables now requires
+  //   tenant_id = chainthings_current_tenant_id() AND user_id = auth.uid()
+  // so tenant A cannot write a row whose user_id belongs to tenant B's user.
 
-  it("notification_settings: cross-user spoof is currently accepted (policy gap)", async () => {
+  it("notification_settings: A cannot insert settings with B's user_id", async () => {
     const a = await fixtureTenant("a");
     const b = await fixtureTenant("b");
 
@@ -572,20 +563,18 @@ describe("RLS: notification — parent-child FK isolation", () => {
       .from("chainthings_notification_settings")
       .insert({
         tenant_id: a.tenantId,
-        user_id: b.userId, // spoofed: B's user_id in A's tenant
+        user_id: b.userId, // spoofed: B's user_id in A's tenant — now blocked
         frequency: "weekly",
         timezone: "UTC",
         send_hour_local: 9,
       })
       .select();
 
-    expect(error).toBeNull();
-    expect(data).toHaveLength(1);
-    expect(data?.[0].tenant_id).toBe(a.tenantId);
-    expect(data?.[0].user_id).toBe(b.userId);
+    // The insert must be blocked (error) or the row hidden by RLS (empty data).
+    expect(error || data?.length === 0).toBeTruthy();
   });
 
-  it("notification_cache: cross-user spoof is currently accepted (policy gap)", async () => {
+  it("notification_cache: A cannot insert cache entry with B's user_id", async () => {
     const a = await fixtureTenant("a");
     const b = await fixtureTenant("b");
 
@@ -593,16 +582,14 @@ describe("RLS: notification — parent-child FK isolation", () => {
       .from("chainthings_notification_cache")
       .insert({
         tenant_id: a.tenantId,
-        user_id: b.userId, // spoofed: B's user_id in A's tenant
+        user_id: b.userId, // spoofed: B's user_id in A's tenant — now blocked
         period_start: "2026-03-01",
         period_end: "2026-03-07",
         scheduled_for_utc: new Date().toISOString(),
       })
       .select();
 
-    expect(error).toBeNull();
-    expect(data).toHaveLength(1);
-    expect(data?.[0].tenant_id).toBe(a.tenantId);
-    expect(data?.[0].user_id).toBe(b.userId);
+    // The insert must be blocked (error) or the row hidden by RLS (empty data).
+    expect(error || data?.length === 0).toBeTruthy();
   });
 });

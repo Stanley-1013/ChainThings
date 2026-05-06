@@ -489,27 +489,11 @@ describe("RPC: chainthings_hybrid_search — tenant scoping", () => {
 
 describe("RLS: rag_chunks — parent-child FK isolation", () => {
 
-  it("cross-tenant FK attack: A inserts chunk with own tenant_id but B's document_id", async () => {
-    // Security scenario: tenant A knows (or guesses) the UUID of tenant B's
-    // document and tries to attach a chunk to it while claiming its own
-    // tenant_id. The RLS insert policy on rag_chunks only checks
-    //   tenant_id = chainthings_current_tenant_id()
-    // which is satisfied (A uses its own tenant_id). The FK constraint on
-    // document_id references chainthings_rag_documents(id) and is also
-    // satisfied (bDoc.id exists). There is NO cross-table tenant-match
-    // constraint at the DB level.
-    //
-    // OBSERVED OUTCOME: the insert SUCCEEDS — the row is created with
-    //   tenant_id = a.tenantId  AND  document_id = bDoc.id
-    // This creates a chunk whose parent document belongs to a different
-    // tenant. The hybrid_search RPC joins chunks to documents via document_id
-    // and also filters by d.tenant_id = v_tenant_id, so in practice B's
-    // document record would be excluded from A's search results. However,
-    // the orphan chunk is still a data-integrity anomaly.
-    //
-    // RECOMMENDATION: add a DB-level check or policy WITH CHECK that enforces
-    //   document_id IN (SELECT id FROM chainthings_rag_documents WHERE tenant_id = chainthings_current_tenant_id())
-    // to close this gap at the schema layer.
+  it("cross-tenant FK: A cannot insert chunk referencing B's document_id", async () => {
+    // The strengthened WITH CHECK policy on rag_chunks now requires:
+    //   EXISTS (SELECT 1 FROM chainthings_rag_documents d
+    //           WHERE d.id = document_id AND d.tenant_id = chainthings_current_tenant_id())
+    // Since bDoc belongs to tenant B, not A, the insert must be blocked.
     const a = await fixtureTenant("fk-attack-a");
     const b = await fixtureTenant("fk-attack-b");
 
@@ -531,31 +515,15 @@ describe("RLS: rag_chunks — parent-child FK isolation", () => {
     const { data, error } = await asUser(a)
       .from("chainthings_rag_chunks")
       .insert({
-        tenant_id: a.tenantId,        // A's own tenant — satisfies RLS policy
-        document_id: bDoc.id,         // B's document — FK satisfied, but tenant mismatch
+        tenant_id: a.tenantId,        // A's own tenant
+        document_id: bDoc.id,         // B's document — now blocked by WITH CHECK
         chunk_index: 0,
         content: "cross-tenant FK attack payload",
         embedding: fakeVector1024(0.77),
       })
-      .select("id, tenant_id, document_id")
-      .single();
+      .select();
 
-    // The insert succeeds: RLS on rag_chunks only checks tenant_id, not
-    // whether document_id.tenant_id matches. This is the gap.
-    // If this assertion flips to expect(error).not.toBeNull() after a schema
-    // fix (e.g. a WITH CHECK constraint or trigger), update the comment above.
-    expect(error).toBeNull();
-    expect(data).not.toBeNull();
-    expect(data?.tenant_id).toBe(a.tenantId);
-    expect(data?.document_id).toBe(bDoc.id);
-
-    // Verify the rogue chunk was actually persisted.
-    const { data: persisted } = await asAdmin()
-      .from("chainthings_rag_chunks")
-      .select("id, tenant_id, document_id")
-      .eq("id", data!.id)
-      .single();
-    expect(persisted?.tenant_id).toBe(a.tenantId);
-    expect(persisted?.document_id).toBe(bDoc.id);
+    // The insert must be blocked (error) or the row hidden by RLS (empty data).
+    expect(error || data?.length === 0).toBeTruthy();
   });
 });

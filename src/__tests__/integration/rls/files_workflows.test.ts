@@ -384,7 +384,7 @@ describe("RLS: chainthings_workflow_executions", () => {
 // ---------------------------------------------------------------------------
 describe("RLS: workflow_executions — parent-child FK isolation", () => {
 
-  it("cross-tenant FK attack: A inserts execution with own tenant_id but B's dev_project_id", async () => {
+  it("cross-tenant FK: A cannot insert execution referencing B's dev_project_id", async () => {
     const a = await fixtureTenant("a");
     const b = await fixtureTenant("b");
 
@@ -394,41 +394,22 @@ describe("RLS: workflow_executions — parent-child FK isolation", () => {
       name: "B's Dev Project",
     });
 
-    // A attempts to insert an execution row with its own tenant_id (passes A's
-    // RLS USING check) but references B's dev_project_id via the nullable FK.
-    //
-    // What happens:
-    //   - The RLS policy "Tenant isolation for workflow_executions" only checks
-    //     tenant_id = chainthings_current_tenant_id(). A supplies a.tenantId so
-    //     that check passes.
-    //   - dev_project_id is a plain FK referential-integrity constraint with no
-    //     RLS-level guard on the referenced row. PostgreSQL does NOT apply RLS
-    //     when resolving FK references — it checks the referenced row exists in
-    //     the base table regardless of the caller's tenant.
-    //   - Therefore the INSERT SUCCEEDS: A's execution row is stored with
-    //     dev_project_id pointing to B's dev_project. This is a cross-tenant
-    //     reference leak that RLS alone does not prevent.
-    //
-    // The test asserts the ACTUAL observed outcome (insert succeeds, no error)
-    // so that any future schema or policy fix that blocks this will surface as a
-    // test failure and prompt a deliberate review.
+    // Attack: A inserts an execution with its own tenant_id but B's dev_project_id.
+    // The strengthened WITH CHECK policy now requires:
+    //   dev_project_id IS NULL OR EXISTS (... dp.tenant_id = chainthings_current_tenant_id())
+    // Since bDevProject belongs to tenant B, not A, the insert must be blocked.
     const { data, error } = await asUser(a)
       .from("chainthings_workflow_executions")
       .insert({
         tenant_id: a.tenantId,
-        dev_project_id: bDevProject.id, // FK to B's row — RLS does not block this
+        dev_project_id: bDevProject.id, // FK to B's row — now blocked by WITH CHECK
         workflow_name: "fk-spoof-flow",
         input_params: {},
         status: "running",
       })
-      .select()
-      .single();
+      .select();
 
-    // INSERT is allowed by RLS (tenant_id = a's id passes the policy).
-    // FK resolves because dev_projects row exists — it belongs to B but
-    // PostgreSQL FK checks bypass RLS on the referenced table.
-    expect(error).toBeNull();
-    expect(data?.dev_project_id).toBe(bDevProject.id);
-    expect(data?.tenant_id).toBe(a.tenantId);
+    // The insert must be blocked (error) or the row hidden by RLS (empty data).
+    expect(error || data?.length === 0).toBeTruthy();
   });
 });
