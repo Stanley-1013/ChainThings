@@ -200,7 +200,12 @@ docker compose up --build -d
 
 ## 測試策略
 
-專案使用 **Vitest** 作為測試框架，目前有 **28 個測試檔案、213 個測試案例**，全部通過。
+專案使用 **Vitest** 作為測試框架，分為兩層：
+
+- **Unit / e2e 套件**：48 個測試檔案、375 個案例，使用 mock，不需外部服務（`npm test`）
+- **Integration 套件**：6 個測試檔案、80 個 RLS 案例，跑在實機 Supabase CLI 測試 stack（`npm run test:integration`）
+
+合計 455 個測試案例，全部通過。
 
 ### 測試涵蓋範圍
 
@@ -249,31 +254,40 @@ docker compose up --build -d
 
 ### 測試基礎設施
 
+**Unit / e2e**
 - `src/__tests__/setup.ts` — 全域 mock 設定（Supabase、AI Gateway、n8n）
-- `src/__tests__/mocks/supabase.ts` — Supabase 客戶端 mock 工廠（支援 select/eq/is/in/single/maybeSingle/insert/update/upsert/delete chains）
+- `src/__tests__/mocks/supabase.ts` — Supabase 客戶端 mock 工廠
 - `src/__tests__/mocks/n8n.ts` — n8n 工作流 mock
-- `src/__tests__/mocks/openclaw.ts` — AI Gateway mock（含 chat + embeddings）
+- `src/__tests__/mocks/openclaw.ts` — AI Gateway mock
 - `src/__tests__/helpers.ts` — 測試輔助函式
-- `src/__tests__/e2e/` — 端對端 API flow 測試（多 endpoint 串接）
+- `src/__tests__/e2e/` — 多 endpoint 串接測試
+
+**Integration（RLS 套件）**
+- `vitest.integration.config.ts` — 獨立 vitest 設定（singleFork、無 mocks）
+- `src/__tests__/integration/setup.ts` — file-level beforeAll/afterAll truncate
+- `src/__tests__/integration/helpers/{stack-config,fixtures,reset}.ts` — 測試 stack 連線、fixtureTenant、truncateAll
+- `src/__tests__/integration/rls/*.test.ts` — 6 個 RLS 測試檔，覆蓋 12 張表 + `chainthings_hybrid_search` RPC
+- `supabase/config.toml` — CLI 測試 stack 設定（PG 15、disable realtime/studio/inbucket/edge_runtime）
+- `Makefile` — `make test-stack-{up,down,reset,status}` 包裝
+- `.github/workflows/integration.yml` — PR/main push CI 跑 RLS 套件
+- 詳細文件：`docs/ops/integration-tests.md`
 
 ### 執行測試
 
 ```bash
-npx vitest run        # 執行所有測試
-npx vitest run --reporter=verbose  # 詳細輸出
+npm test                    # Unit + e2e（mock，毫秒級）
+npm run test:integration    # RLS（需先 `make test-stack-up` 起 Supabase 測試 stack）
+make test-stack-up          # 啟動 CLI 測試 stack
+make test-stack-down        # 停止測試 stack
 ```
 
 ### 待補充
 
-- Supabase RLS 策略測試（含 RAG 跨租戶隔離驗證 — 需實機 Supabase）
 - RAG 管線單元測試（`lib/rag/{chunker,worker,search}`）
 - 中介軟體認證邏輯測試（`src/middleware.ts`）
-- Notifications API 路由測試（`/api/notifications`、`/settings`、`/generate`）
-- Memory API 路由測試（`/api/memory`）
-- Items extract API 測試（`/api/items/extract`）
-- RAG embed API 測試（`/api/rag/embed`）
+- Items extract / RAG embed / Memory API 路由測試
 - Dev Services 路由測試（`/api/dev-services/{actions,worker,projects,*/authorize,*/callback,webhooks/*}`）
-- Hedy backfill / check API 測試（`/api/integrations/hedy/{backfill,check}`）
+- Hedy backfill / check API 測試
 
 ## 編碼規範
 
@@ -325,6 +339,7 @@ npx vitest run --reporter=verbose  # 詳細輸出
 | 2026-03-17 | RAG + 個人秘書 | 新增 pgvector RAG（混合搜索 + RRF）、助手記憶、AI 通知摘要、Meeting Notes 手動創建、嵌入管線；3 個 DB migrations（009-011）、7 個新 API 路由、Dashboard 通知面板 |
 | 2026-04-22 | Task Center + Dev Services | 新增任務中心（批量勾選/刪除/設提醒/標完成）、GitHub/GitLab/Jira 多服務整合（OAuth + PAT + 加密憑證）、Dev Projects 聚合層、AI 跨服務動作 + 人工審批 token、race-safe 工作流 worker（cron 觸發）；6 個 DB migrations（020-025）、9 個新 API 路由 |
 | 2026-04-29 | Hedy backfill + 重設密碼 + 開發決策上下文 | 新增 Hedy 歷史會議回填（一鍵 backfill + connection check）、Hedy API client lib（types + client，含分頁/重試/區域路由）、忘記密碼 + 重設密碼頁、`.context/` 開發決策歸檔基礎設施（commits.jsonl + prefs/）、修補 `/api/integrations` partial unique index 上的 upsert bug 與 Hedy 自然語言 dueDate 處理 |
+| 2026-05-06 | RLS 集成測試 | 新增 Supabase CLI 測試 stack（supabase/config.toml）+ vitest integration suite（80 RLS 測試覆蓋 12 表 + hybrid_search RPC）；CI workflow `integration.yml`；Makefile `test-stack-{up,down,reset}`；fixtureTenant/asUser/asAdmin/asAnon 助手；migration 005/0119 微調以支援 CLI 重複套用 |
 
 ## .context 项目上下文
 
