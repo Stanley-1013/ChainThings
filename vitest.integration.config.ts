@@ -8,7 +8,7 @@ import path from "path";
 // @/lib/supabase/server which would prevent real DB access. RLS
 // tests need the real client.
 //
-// singleFork is required because RLS tests share global DB state
+// fileParallelism: false is required because RLS tests share global DB state
 // (auth.users + business tables) and cannot run in parallel.
 
 export default defineConfig({
@@ -23,7 +23,9 @@ export default defineConfig({
     setupFiles: ["src/__tests__/integration/setup.ts"],
     testTimeout: 30_000,
     hookTimeout: 30_000,
-    pool: "forks",
-    poolOptions: { forks: { singleFork: true } },
+    // RLS tests share a single Postgres + GoTrue stack; running test files
+    // in parallel would have them clobber each other's auth.users state.
+    // Tests within a file already run serially by default in vitest.
+    fileParallelism: false,
   },
 });

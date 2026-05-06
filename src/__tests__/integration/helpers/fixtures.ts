@@ -79,38 +79,68 @@ export async function fixtureTenant(
   }
   const userId = created.user.id;
 
-  // Trigger fires synchronously in the same transaction that committed
-  // auth.users insert, so by the time createUser returns, the profile
-  // row should already exist. But add a 50ms safety net for edge cases.
-  await new Promise((r) => setTimeout(r, 50));
+  // The on_auth_user_created trigger inserts chainthings_profiles in the
+  // same transaction as the auth.users INSERT. After createUser returns the
+  // commit should be visible — but under load we occasionally see a brief
+  // visibility/replication window. Retry the profile lookup a few times
+  // before giving up.
+  let profile: { tenant_id: string } | null = null;
+  let profileErr: { message: string } | null = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 100 * attempt));
+    const res = await admin
+      .from("chainthings_profiles")
+      .select("tenant_id")
+      .eq("id", userId)
+      .maybeSingle();
+    if (res.data) {
+      profile = res.data;
+      break;
+    }
+    profileErr = res.error;
+  }
 
-  const { data: profile, error: profileErr } = await admin
-    .from("chainthings_profiles")
-    .select("tenant_id")
-    .eq("id", userId)
-    .single();
-
-  if (profileErr || !profile) {
+  if (!profile) {
     throw new Error(
-      `fixtureTenant: profile lookup failed for user ${userId}: ${profileErr?.message ?? "no row"}`,
+      `fixtureTenant: profile lookup failed for user ${userId} after retries: ${profileErr?.message ?? "no row"}`,
     );
   }
 
-  // Sign in to get a JWT that carries the role=authenticated claim
-  // and the user's sub. RLS policies need this.
+  // Sign in to get a JWT that carries the role=authenticated claim and the
+  // user's sub. RLS policies need this. Retry once on the GoTrue
+  // prepared-statement / sessions-FK transient — it's a known issue under
+  // high createUser/deleteUser churn (see docs/ops/integration-tests.md).
   const cfg = getStackConfig();
   const signInClient = createClient(cfg.url, cfg.anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
-  const { data: session, error: signInErr } =
-    await signInClient.auth.signInWithPassword({
+
+  let session: { access_token: string } | null = null;
+  let signInErrMsg: string | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 250));
+    const { data, error: err } = await signInClient.auth.signInWithPassword({
       email,
       password: TEST_PASSWORD,
     });
+    if (data.session) {
+      session = data.session;
+      break;
+    }
+    signInErrMsg = err?.message ?? "no session";
+    // Only retry on the known transient class
+    if (
+      !/granting user|prepared statement|transaction is aborted|Database error/i.test(
+        signInErrMsg,
+      )
+    ) {
+      break;
+    }
+  }
 
-  if (signInErr || !session.session) {
+  if (!session) {
     throw new Error(
-      `fixtureTenant: signIn failed for ${email}: ${signInErr?.message ?? "no session"}`,
+      `fixtureTenant: signIn failed for ${email} (userId=${userId}): ${signInErrMsg}`,
     );
   }
 
@@ -118,7 +148,33 @@ export async function fixtureTenant(
     userId,
     email,
     password: TEST_PASSWORD,
-    jwt: session.session.access_token,
+    jwt: session.access_token,
     tenantId: profile.tenant_id,
   };
+}
+
+// insertOrThrow — for cross-tenant seeds. The cross-tenant assertion pattern
+// is "tenant A creates a row, tenant B can't see it". If the *seed* insert
+// silently fails (RLS policy drift, schema change, FK violation), the
+// follow-up assertion would still pass with `[]` — a false-positive RLS
+// pass. Wrap every seed with this helper to crash loudly instead.
+//
+// Returns the inserted row's id (assumes the row has an `id` column, which
+// is true for every chainthings_* table).
+export async function insertOrThrow<T extends { id: string }>(
+  client: SupabaseClient,
+  table: string,
+  row: Record<string, unknown>,
+): Promise<T> {
+  const { data, error } = await client
+    .from(table)
+    .insert(row)
+    .select()
+    .single<T>();
+  if (error || !data) {
+    throw new Error(
+      `insertOrThrow: ${table} insert failed (${error?.code ?? "?"}): ${error?.message ?? "no row"}`,
+    );
+  }
+  return data;
 }
