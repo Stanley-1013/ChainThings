@@ -36,7 +36,7 @@ Add via `crontab -e`. Replace `YOUR_APP` with your app's public URL (e.g. the ng
 | Platform | Suggestion |
 |----------|-----------|
 | **Vercel Cron** | Add a `vercel.json` cron entry: `{ "crons": [{ "path": "/api/dev-services/worker", "schedule": "* * * * *" }] }`. Vercel automatically forwards `Authorization: Bearer <CRON_SECRET>` if you set the env var. |
-| **GitHub Actions** | Use a scheduled workflow with `schedule: [cron: '* * * * *']` and a `curl` step using `${{ secrets.CRON_SECRET }}`. |
+| **GitHub Actions** | `.github/workflows/dev-services-cron.yml` exists but scheduled runs are disabled (unreliable cadence + ngrok-tunnel availability). Trigger manually via `workflow_dispatch`, or re-enable the commented-out `schedule:` block with `*/15 * * * *` once the endpoint is on a stable public URL. |
 | **Supabase pg_cron** | `SELECT cron.schedule('dev-worker', '* * * * *', $$SELECT net.http_post(url := 'https://YOUR_APP/api/dev-services/worker', headers := '{"Authorization":"Bearer <CRON_SECRET>","Content-Type":"application/json"}', body := '{}')$$);` — requires the `pg_net` extension. |
 
 ## Security note
