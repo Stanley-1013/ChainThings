@@ -88,7 +88,7 @@ export async function POST(
 
   // Validate status_mapping if provided
   if (status_mapping !== undefined) {
-    if (typeof status_mapping !== "object" || Array.isArray(status_mapping)) {
+    if (status_mapping === null || typeof status_mapping !== "object" || Array.isArray(status_mapping)) {
       return NextResponse.json({ error: "status_mapping must be an object" }, { status: 400 });
     }
     if (
@@ -102,6 +102,20 @@ export async function POST(
       (typeof status_mapping.mr_merged !== "string" || status_mapping.mr_merged.length > 100)
     ) {
       return NextResponse.json({ error: "status_mapping.mr_merged must be a string of at most 100 characters" }, { status: 400 });
+    }
+  }
+
+  // Validate jira_projects format: each key must match Jira's key format
+  if (jira_projects !== undefined) {
+    const jiraKeyPattern = /^[A-Z][A-Z0-9_]{1,9}$/;
+    const invalidKey = (jira_projects as unknown[]).find(
+      (k) => typeof k !== "string" || !jiraKeyPattern.test(k),
+    );
+    if (invalidKey !== undefined) {
+      return NextResponse.json(
+        { error: "jira_projects entries must match /^[A-Z][A-Z0-9_]{1,9}$/" },
+        { status: 400 },
+      );
     }
   }
 

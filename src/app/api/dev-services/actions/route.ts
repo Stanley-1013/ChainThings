@@ -94,8 +94,7 @@ export async function POST(request: Request) {
     const result = await actionDef.handler(client, profile.tenant_id, projectId, validation.data);
     return NextResponse.json({ data: result });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Action failed";
     console.error(`Action ${actionName} on ${service} failed:`, err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Action failed. Check server logs." }, { status: 500 });
   }
 }

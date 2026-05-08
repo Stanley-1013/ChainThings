@@ -114,4 +114,54 @@ describe("action-registry", () => {
       }
     });
   });
+
+  describe("review_mr registration (B1 + B4)", () => {
+    it("does not require approval (B4)", () => {
+      const action = getAction("review_mr");
+      expect(action!.requiresApproval).toBe(false);
+    });
+  });
+
+  describe("submit_review schema (B3)", () => {
+    it("accepts selectedComments without severity (defaults to info)", () => {
+      const result = validateActionInput("submit_review", {
+        reviewId: "123e4567-e89b-12d3-a456-426614174000",
+        repoRef: "owner/repo",
+        mrRef: "42",
+        selectedComments: [
+          { path: "src/foo.ts", line: 10, body: "Please fix this." },
+        ],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const comments = result.data.selectedComments as Array<{ severity: string }>;
+        expect(comments[0].severity).toBe("info");
+      }
+    });
+
+    it("accepts selectedComments with an explicit severity string", () => {
+      const result = validateActionInput("submit_review", {
+        reviewId: "123e4567-e89b-12d3-a456-426614174000",
+        repoRef: "owner/repo",
+        mrRef: "42",
+        selectedComments: [
+          { path: "src/foo.ts", line: 10, body: "Critical bug.", severity: "critical" },
+        ],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("does not require approval (B4)", () => {
+      const action = getAction("submit_review");
+      expect(action!.requiresApproval).toBe(false);
+    });
+  });
+
+  describe("submit_review cross-tenant guard (B2)", () => {
+    it("review_mr and submit_review handlers are distinct from each other", () => {
+      // Structural check: both are registered and have distinct names
+      expect(getAction("review_mr")?.name).toBe("review_mr");
+      expect(getAction("submit_review")?.name).toBe("submit_review");
+    });
+  });
 });

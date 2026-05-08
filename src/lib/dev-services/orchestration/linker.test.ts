@@ -38,4 +38,22 @@ describe("extractTicketRefs", () => {
     const refs = extractTicketRefs("fixes proj-123", ["PROJ"]);
     expect(refs).toEqual(["PROJ-123"]);
   });
+
+  // ── B7: regex injection guard ─────────────────────────────────────────────
+
+  it("does not throw when a project key contains a regex metacharacter (B7)", () => {
+    // A key like "PROJ.X" without escaping would match "PROJAX-1" (dot = any char).
+    // With escaping it should only match literal "PROJ.X-" patterns.
+    expect(() =>
+      extractTicketRefs("PROJAX-1 is here", ["PROJ.X"]),
+    ).not.toThrow();
+  });
+
+  it("does not match spurious tickets when project key has metacharacters (B7)", () => {
+    // "PROJ+": without escaping the + makes the P required-repeated, breaking or
+    // widening the match. With escaping, no match should be returned for "PROJ-1".
+    const refs = extractTicketRefs("PROJ-1 is in PROJ.X-2", ["PROJ.X"]);
+    // Should only match literal "PROJ.X-2", not "PROJ-1"
+    expect(refs).not.toContain("PROJ-1");
+  });
 });

@@ -406,4 +406,100 @@ describe("/api/dev-services/projects/[projectId]/connect", () => {
     expect(insert).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
   });
+
+  // ── B6: null status_mapping must return 400, not 500 ──────────────────────
+  it("should return 400 when status_mapping is null (B6)", async () => {
+    const request = createJsonRequest(
+      "http://localhost/api/dev-services/projects/project-1/connect",
+      {
+        service: "jira",
+        jira_domain: "example.atlassian.net",
+        jira_email: "dev@example.com",
+        api_token: "jira-token",
+        status_mapping: null,
+      },
+    );
+
+    const response = await POST(request, projectParams());
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/status_mapping/i);
+  });
+
+  it("should return 400 when status_mapping is an array (B6 — array guard)", async () => {
+    const request = createJsonRequest(
+      "http://localhost/api/dev-services/projects/project-1/connect",
+      {
+        service: "jira",
+        jira_domain: "example.atlassian.net",
+        jira_email: "dev@example.com",
+        api_token: "jira-token",
+        status_mapping: ["mr_opened"],
+      },
+    );
+
+    const response = await POST(request, projectParams());
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/status_mapping/i);
+  });
+
+  // ── B7: jira_projects key format validation ───────────────────────────────
+  it("should return 400 when a jira_projects key is lowercase (B7)", async () => {
+    const request = createJsonRequest(
+      "http://localhost/api/dev-services/projects/project-1/connect",
+      {
+        service: "jira",
+        jira_domain: "example.atlassian.net",
+        jira_email: "dev@example.com",
+        api_token: "jira-token",
+        jira_projects: ["proj"],
+      },
+    );
+
+    const response = await POST(request, projectParams());
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/jira_projects/i);
+  });
+
+  it("should return 400 when a jira_projects key contains regex metacharacters (B7)", async () => {
+    const request = createJsonRequest(
+      "http://localhost/api/dev-services/projects/project-1/connect",
+      {
+        service: "jira",
+        jira_domain: "example.atlassian.net",
+        jira_email: "dev@example.com",
+        api_token: "jira-token",
+        jira_projects: ["PROJ+EXTRA"],
+      },
+    );
+
+    const response = await POST(request, projectParams());
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/jira_projects/i);
+  });
+
+  it("should accept valid uppercase jira_projects keys (B7)", async () => {
+    const { insert } = setupAdmin();
+    const request = createJsonRequest(
+      "http://localhost/api/dev-services/projects/project-1/connect",
+      {
+        service: "jira",
+        jira_domain: "example.atlassian.net",
+        jira_email: "dev@example.com",
+        api_token: "jira-token",
+        jira_projects: ["PROJ", "BACK2", "MY_SVC"],
+      },
+    );
+
+    const response = await POST(request, projectParams());
+
+    expect(response.status).toBe(200);
+  });
 });

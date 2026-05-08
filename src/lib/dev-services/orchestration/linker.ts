@@ -1,11 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { createDevServiceClient } from "../factory";
 import type { DevServicePublicConfig } from "../types";
+import { escapeRegExp } from "@/lib/utils";
 
 /** Extract Jira ticket refs (e.g., PROJ-123) from text. */
 export function extractTicketRefs(text: string, jiraProjects: string[]): string[] {
   if (!jiraProjects.length || !text) return [];
-  const pattern = new RegExp(`(${jiraProjects.join("|")})-\\d+`, "gi");
+  const escaped = jiraProjects.map(escapeRegExp);
+  const pattern = new RegExp(`(${escaped.join("|")})-\\d+`, "gi");
   return [...new Set(text.match(pattern) ?? [])].map((r) => r.toUpperCase());
 }
 

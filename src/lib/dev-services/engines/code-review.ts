@@ -152,11 +152,27 @@ export async function saveReviewDraft(
 
 export async function submitReview(
   reviewId: string,
+  tenantId: string,
+  projectId: string,
+  service: string,
   selectedComments: ReviewComment[],
   client: CodeHostClient,
-  repoRef: string,
-  mrRef: string,
 ): Promise<void> {
+  // Fetch and validate the review row — prevents cross-tenant update
+  const { data: review } = await supabaseAdmin
+    .from("chainthings_code_reviews")
+    .select("id, tenant_id, subject_ref, repo_ref")
+    .eq("id", reviewId)
+    .eq("tenant_id", tenantId)
+    .eq("service", service)
+    .maybeSingle();
+
+  if (!review) throw new Error("Review not found");
+
+  // Use DB-sourced refs as source of truth (do not trust caller-supplied values)
+  const repoRef: string = review.repo_ref;
+  const mrRef: string = review.subject_ref;
+
   const hasCritical = selectedComments.some((c) => c.severity === "critical");
   const event = hasCritical ? "request_changes" : "comment";
   const summary = `AI Code Review: ${selectedComments.length} comments (${hasCritical ? "changes requested" : "reviewed"})`;
@@ -170,5 +186,7 @@ export async function submitReview(
       review_comments: selectedComments,
       submitted_at: new Date().toISOString(),
     })
-    .eq("id", reviewId);
+    .eq("id", reviewId)
+    .eq("tenant_id", tenantId)
+    .eq("dev_project_id", projectId);
 }

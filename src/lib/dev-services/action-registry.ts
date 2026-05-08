@@ -60,7 +60,7 @@ const submitReviewSchema = z.object({
     path: z.string().min(1).max(500),
     line: z.number(),
     body: z.string().min(1).max(10000),
-    severity: z.enum(["critical", "warning", "suggestion", "praise"]),
+    severity: z.string().max(20).optional().default("info"),
     suggestion: z.string().max(10000).optional(),
   })).max(100),
 });
@@ -145,8 +145,8 @@ const actionRegistry: Record<string, ActionDef> = {
     name: "review_mr",
     requiredCapability: "code_review",
     inputSchema: reviewMrSchema,
-    requiresApproval: true,
-    handler: async (client, _tenantId, _projectId, params) => {
+    requiresApproval: false,
+    handler: async (client, tenantId, projectId, params) => {
       const host = client.asCodeHost?.();
       if (!host) throw new Error("Code host not available");
       const diff = await host.getMergeRequestDiff(
@@ -157,13 +157,37 @@ const actionRegistry: Record<string, ActionDef> = {
         params.repoRef as string,
         params.mrRef as string,
       );
-      const { generateReviewDraft } = await import("./engines/code-review");
-      return generateReviewDraft(diff, {
+      const { generateReviewDraft, saveReviewDraft } = await import("./engines/code-review");
+      const draft = await generateReviewDraft(diff, {
         type: "merge_request",
         ref: mr.ref,
         title: mr.title,
         url: mr.url,
       }, { language: params.language as string | undefined });
+      // Resolve integration_id for the DB row
+      const { supabaseAdmin } = await import("@/lib/supabase/admin");
+      const { data: integration } = await supabaseAdmin
+        .from("chainthings_integrations")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("dev_project_id", projectId)
+        .eq("service", client.service)
+        .maybeSingle();
+      const integrationId: string = integration?.id ?? "";
+      const reviewId = await saveReviewDraft(
+        tenantId,
+        integrationId,
+        client.service,
+        params.repoRef as string,
+        {
+          type: "merge_request",
+          ref: params.mrRef as string,
+          title: mr.title,
+          url: mr.url,
+        },
+        draft,
+      );
+      return { reviewId };
     },
   },
 
@@ -199,17 +223,18 @@ const actionRegistry: Record<string, ActionDef> = {
     name: "submit_review",
     requiredCapability: "code_review",
     inputSchema: submitReviewSchema,
-    requiresApproval: true,
-    handler: async (client, _tenantId, _projectId, params) => {
+    requiresApproval: false,
+    handler: async (client, tenantId, projectId, params) => {
       const host = client.asCodeHost?.();
       if (!host) throw new Error("Code host not available");
       const { submitReview } = await import("./engines/code-review");
       await submitReview(
         params.reviewId as string,
+        tenantId,
+        projectId,
+        client.service,
         params.selectedComments as import("./types").ReviewComment[],
         host,
-        params.repoRef as string,
-        params.mrRef as string,
       );
       return { submitted: true };
     },

@@ -257,4 +257,23 @@ describe("/api/dev-services/actions", () => {
     expect(mockCreateDevServiceClient).not.toHaveBeenCalled();
     expect(handler).toHaveBeenCalledWith(null, "tenant-456", "project-1", { title: "Issue" });
   });
+
+  it("should return generic error message when action throws (B8 — no internal leak)", async () => {
+    setupAction();
+    mockCreateDevServiceClient.mockRejectedValue(new Error("db connection secret details"));
+    const request = createJsonRequest("http://localhost/api/dev-services/actions", {
+      projectId: "project-1",
+      service: "github",
+      action: "create_issue",
+      params: { title: "Issue" },
+    });
+
+    const response = await POST(request);
+    const body = await getJsonResponse(response);
+
+    expect(response.status).toBe(500);
+    // Must NOT expose the raw internal error message to the client
+    expect(body.error).toBe("Action failed. Check server logs.");
+    expect(body.error).not.toContain("db connection secret details");
+  });
 });
