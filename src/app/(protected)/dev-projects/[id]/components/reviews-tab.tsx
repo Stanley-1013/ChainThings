@@ -12,8 +12,8 @@ import { BotMessageSquare, ExternalLink } from "lucide-react";
 interface CodeReview {
   id: string;
   repo_ref: string | null;
-  mr_ref: string | null;
-  status: string;
+  subject_ref: string | null;
+  review_status: string;
   created_at: string;
 }
 
@@ -40,7 +40,7 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
         const supabase = createClient();
         const { data, error: dbErr } = await supabase
           .from("chainthings_code_reviews")
-          .select("id, repo_ref, mr_ref, status, created_at")
+          .select("id, repo_ref, subject_ref, review_status, created_at")
           .eq("dev_project_id", projectId)
           .order("created_at", { ascending: false })
           .limit(50);
@@ -99,8 +99,8 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
                     {review.repo_ref}
                   </span>
                 )}
-                {review.mr_ref && (
-                  <span className="text-xs text-muted-foreground">#{review.mr_ref}</span>
+                {review.subject_ref && (
+                  <span className="text-xs text-muted-foreground">#{review.subject_ref}</span>
                 )}
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -108,8 +108,8 @@ export function ReviewsTab({ projectId }: ReviewsTabProps) {
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <Badge variant={statusVariant(review.status)} className="text-[10px] capitalize">
-                {review.status}
+              <Badge variant={statusVariant(review.review_status)} className="text-[10px] capitalize">
+                {review.review_status}
               </Badge>
               <Button asChild size="sm" variant="ghost" className="h-7 gap-1 text-xs">
                 <Link href={`/dev-projects/${projectId}/reviews/${review.id}`}>

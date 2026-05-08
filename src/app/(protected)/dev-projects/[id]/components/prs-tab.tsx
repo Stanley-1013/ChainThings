@@ -116,13 +116,18 @@ export function PrsTab({ projectId, defaultRepoRef }: PrsTabProps) {
     if (!repoRef.trim() || !mrRef.trim()) return;
     const setLoadingFn = event === "mr_opened" ? setSyncOpenLoading : setSyncMergeLoading;
     setLoadingFn(true);
+    // TODO: detect GitLab vs GitHub by inspecting defaultRepoRef/repoRef when GitLab support is added.
+    // For now, always use "github" — the backend dispatcher resolves the code-host client from
+    // this service field, and only code-host services expose the `branches` capability needed by
+    // sync_pr_to_jira. Passing "jira" here causes a 403.
+    const codeHostService = "github";
     try {
       const res = await fetch("/api/dev-services/actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId,
-          service: "jira",
+          service: codeHostService,
           action: "sync_pr_to_jira",
           params: { repoRef: repoRef.trim(), prRef: mrRef.trim(), event },
         }),

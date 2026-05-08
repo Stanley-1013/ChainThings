@@ -18,6 +18,20 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
     redirect("/login");
   }
 
+  // Fetch tenant_id from profile — tenant_id is the primary isolation guard per coding-style.md.
+  // RLS is a safety net only; explicit tenant_id filtering must always be present.
+  const { data: profile } = await supabase
+    .from("chainthings_profiles")
+    .select("tenant_id")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile?.tenant_id) {
+    redirect("/login");
+  }
+
+  const tenantId = profile.tenant_id;
+
   const { data: review, error } = await supabase
     .from("chainthings_code_reviews")
     .select(
@@ -25,6 +39,7 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
     )
     .eq("id", reviewId)
     .eq("dev_project_id", projectId)
+    .eq("tenant_id", tenantId)
     .single();
 
   if (error || !review) {
